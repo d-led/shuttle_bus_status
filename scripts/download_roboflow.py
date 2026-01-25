@@ -45,26 +45,42 @@ try:
                 # Get the version with the most images (usually the latest)
                 latest_version = max(versions, key=lambda v: v.get("images", 0))
                 version_num = latest_version["id"].split("/")[-1]
+                output_dir = sys.argv[1] if len(sys.argv) > 1 else "."
                 dataset = project.version(int(version_num)).download(
-                    "yolov8", location=sys.argv[1] if len(sys.argv) > 1 else "."
+                    "yolov8", location=output_dir
                 )
             else:
                 # Fallback: try version 7 (latest based on test)
+                output_dir = sys.argv[1] if len(sys.argv) > 1 else "."
                 dataset = project.version(7).download(
-                    "yolov8", location=sys.argv[1] if len(sys.argv) > 1 else "."
+                    "yolov8", location=output_dir
                 )
         except Exception as ve:
             # If version detection fails, try downloading latest without version number
             try:
-                dataset = project.download(
-                    "yolov8", location=sys.argv[1] if len(sys.argv) > 1 else "."
-                )
+                output_dir = sys.argv[1] if len(sys.argv) > 1 else "."
+                dataset = project.download("yolov8", location=output_dir)
             except Exception:
                 # Last resort: try version 7
-                dataset = project.version(7).download(
-                    "yolov8", location=sys.argv[1] if len(sys.argv) > 1 else "."
-                )
-        print("SUCCESS")
+                output_dir = sys.argv[1] if len(sys.argv) > 1 else "."
+                dataset = project.version(7).download("yolov8", location=output_dir)
+
+        # Verify download actually happened
+        import glob
+
+        output_dir = sys.argv[1] if len(sys.argv) > 1 else "."
+        images = (
+            glob.glob(os.path.join(output_dir, "**", "*.jpg"), recursive=True)
+            + glob.glob(os.path.join(output_dir, "**", "*.png"), recursive=True)
+            + glob.glob(os.path.join(output_dir, "**", "*.jpeg"), recursive=True)
+        )
+        if len(images) > 0:
+            print(f"SUCCESS: {len(images)} images downloaded")
+        else:
+            print("WARNING: Download reported success but no images found")
+            print("This might be a Roboflow API issue. Try manual download:")
+            print("https://universe.roboflow.com/max-mustermann-gmm7j/german-license-plates-hptbz")
+            sys.exit(1)
     except Exception as e:
         print(f"API_ERROR: {e}")
         import traceback
