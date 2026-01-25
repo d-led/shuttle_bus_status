@@ -22,6 +22,95 @@ def add_rfc3339_timestamp(
     return event_dict
 
 
+def _get_base_processors() -> list[Processor]:
+    """Get base processors for structlog."""
+    return [
+        structlog.contextvars.merge_contextvars,
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.add_logger_name,
+        add_rfc3339_timestamp,
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+        structlog.processors.UnicodeDecoder(),
+    ]
+
+
+def _create_file_handler(log_file: str | Path, level: int) -> logging.FileHandler:
+    """Create and configure a file handler."""
+    log_path = Path(log_file)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    handler = logging.FileHandler(log_path, encoding="utf-8")
+    handler.setLevel(level)
+    return handler
+
+
+def _create_console_handler(level: int) -> logging.StreamHandler:
+    """Create and configure a console handler."""
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(level)
+    return handler
+
+
+def _create_file_formatter(
+    base_processors: list[Processor],
+) -> structlog.stdlib.ProcessorFormatter:
+    """Create formatter for file output (JSON)."""
+    file_processors = [*base_processors, structlog.processors.JSONRenderer()]
+    return structlog.stdlib.ProcessorFormatter(
+        processor=file_processors[-1],  # type: ignore[arg-type]
+        foreign_pre_chain=file_processors[:-1],  # type: ignore[arg-type]
+    )
+
+
+def _create_console_formatter(
+    base_processors: list[Processor],
+) -> structlog.stdlib.ProcessorFormatter:
+    """Create formatter for console output (pretty)."""
+    console_processors = [*base_processors, structlog.dev.ConsoleRenderer()]
+    return structlog.stdlib.ProcessorFormatter(
+        processor=console_processors[-1],  # type: ignore[arg-type]
+        foreign_pre_chain=console_processors[:-1],  # type: ignore[arg-type]
+    )
+
+
+def _configure_handlers(
+    log_file: str | Path | None,
+    log_to_console: bool,
+    level: int,
+) -> tuple[list[logging.Handler], list[Processor]]:
+    """Configure logging handlers and return handlers and processors."""
+    handlers: list[logging.Handler] = []
+    base_processors = _get_base_processors()
+
+    if log_file and log_to_console:
+        # Both file and console
+        file_handler = _create_file_handler(log_file, level)
+        console_handler = _create_console_handler(level)
+        file_handler.setFormatter(_create_file_formatter(base_processors))
+        console_handler.setFormatter(_create_console_formatter(base_processors))
+        handlers.extend([file_handler, console_handler])
+        processors = [
+            *base_processors,
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+        ]
+    elif log_file:
+        # File only
+        file_handler = _create_file_handler(log_file, level)
+        file_handler.setFormatter(_create_file_formatter(base_processors))
+        handlers.append(file_handler)
+        processors = [
+            *base_processors,
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+        ]
+    else:
+        # Console only
+        console_handler = _create_console_handler(level)
+        handlers.append(console_handler)
+        processors = [*base_processors, structlog.dev.ConsoleRenderer()]
+
+    return handlers, processors
+
+
 def setup_logging(
     log_level: str = "INFO",
     log_file: str | Path | None = None,
@@ -34,85 +123,15 @@ def setup_logging(
         log_file: Path to log file (optional). If None, no file logging.
         log_to_console: Whether to log to console/stdout
     """
-    # Convert log level string to logging constant
     level = getattr(logging, log_level.upper(), logging.INFO)
 
-    # Configure standard logging handlers
+    # Configure root logger
     root_logger = logging.getLogger()
     root_logger.setLevel(level)
     root_logger.handlers.clear()
 
-    handlers: list[logging.Handler] = []
-
-    # Console handler
-    console_handler: logging.Handler | None = None
-    if log_to_console:
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setLevel(level)
-        handlers.append(console_handler)
-
-    # File handler
-    file_handler: logging.Handler | None = None
-    if log_file:
-        log_path = Path(log_file)
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        file_handler = logging.FileHandler(log_path, encoding="utf-8")
-        file_handler.setLevel(level)
-        handlers.append(file_handler)
-
-    # Base processors (same for all outputs)
-    base_processors: list[Processor] = [
-        structlog.contextvars.merge_contextvars,
-        structlog.stdlib.add_log_level,
-        structlog.stdlib.add_logger_name,
-        add_rfc3339_timestamp,
-        structlog.processors.StackInfoRenderer(),
-        structlog.processors.format_exc_info,
-        structlog.processors.UnicodeDecoder(),
-    ]
-
-    # Configure formatters based on output type
-    if log_file and log_to_console:
-        # Both file and console: JSON for file, console-friendly for stdout
-        # File gets JSON
-        assert file_handler is not None
-        assert console_handler is not None
-        file_processors = [*base_processors, structlog.processors.JSONRenderer()]
-        file_formatter = structlog.stdlib.ProcessorFormatter(
-            processor=file_processors[-1],  # type: ignore[arg-type]
-            foreign_pre_chain=file_processors[:-1],  # type: ignore[arg-type]
-        )
-        file_handler.setFormatter(file_formatter)
-
-        # Console gets pretty output
-        console_processors = [*base_processors, structlog.dev.ConsoleRenderer()]
-        console_formatter = structlog.stdlib.ProcessorFormatter(
-            processor=console_processors[-1],  # type: ignore[arg-type]
-            foreign_pre_chain=console_processors[:-1],  # type: ignore[arg-type]
-        )
-        console_handler.setFormatter(console_formatter)
-
-        # Use ProcessorFormatter wrapper for structlog
-        processors = [
-            *base_processors,
-            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
-        ]
-    elif log_file:
-        # File only: JSON output
-        assert file_handler is not None
-        file_processors = [*base_processors, structlog.processors.JSONRenderer()]
-        file_formatter = structlog.stdlib.ProcessorFormatter(
-            processor=file_processors[-1],  # type: ignore[arg-type]
-            foreign_pre_chain=file_processors[:-1],  # type: ignore[arg-type]
-        )
-        file_handler.setFormatter(file_formatter)
-        processors = [
-            *base_processors,
-            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
-        ]
-    else:
-        # Console only: console-friendly output
-        processors = [*base_processors, structlog.dev.ConsoleRenderer()]
+    # Configure handlers and processors
+    handlers, processors = _configure_handlers(log_file, log_to_console, level)
 
     # Add handlers to root logger
     for handler in handlers:

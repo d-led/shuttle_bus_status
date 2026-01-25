@@ -147,18 +147,20 @@ class Settings(BaseSettings):
     debouncing: DebouncingSettings = Field(default_factory=DebouncingSettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
 
+    @staticmethod
+    def _find_project_root() -> Path:
+        """Find project root by looking for config.toml."""
+        current = Path.cwd()
+        for parent in [current, *current.parents]:
+            if (parent / "config.toml").exists():
+                return parent
+        return current
+
     @classmethod
     def load_from_project_root(cls, project_root: Path | None = None) -> "Settings":
         """Load settings from config.toml in project root."""
         if project_root is None:
-            # Try to find project root by looking for config.toml
-            current = Path.cwd()
-            for parent in [current, *current.parents]:
-                if (parent / "config.toml").exists():
-                    project_root = parent
-                    break
-            if project_root is None:
-                project_root = current
+            project_root = cls._find_project_root()
 
         config_file = project_root / "config.toml"
         if not config_file.exists():
@@ -167,12 +169,9 @@ class Settings(BaseSettings):
                 "Please create config.toml in the project root."
             )
 
-        # Read TOML file
         with config_file.open("rb") as f:
             toml_data = tomllib.load(f)
 
-        # Convert nested dict to flat dict with __ separator for pydantic-settings
-        # pydantic-settings expects nested settings to be passed as nested dicts
         return cls(**toml_data)
 
     def get_camera_device(self) -> str:
