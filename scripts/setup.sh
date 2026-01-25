@@ -108,14 +108,19 @@ if command -v uv &> /dev/null; then
     cd camera
     # Always use unsafe-best-match to check all indexes (piwheels may have older versions)
     # This is needed on macOS and other non-RPi systems where piwheels shouldn't be prioritized
-    uv sync --dev --index-strategy unsafe-best-match || uv pip install -e ".[dev]"
-    echo "✓ Camera dependencies installed with uv"
+    # Use --no-build-isolation to avoid resolving for all platforms
+    uv sync --dev --index-strategy unsafe-best-match --no-build-isolation 2>/dev/null || \
+    uv pip install -e ".[dev]" --index-strategy unsafe-best-match || \
+    python -m pip install -e ".[dev]"
+    echo "✓ Camera dependencies installed"
     
     # Install server package
     cd "$PROJECT_ROOT/server"
     # Always use unsafe-best-match to check all indexes
-    uv sync --dev --index-strategy unsafe-best-match || uv pip install -e ".[dev]"
-    echo "✓ Server dependencies installed with uv"
+    uv sync --dev --index-strategy unsafe-best-match --no-build-isolation 2>/dev/null || \
+    uv pip install -e ".[dev]" --index-strategy unsafe-best-match || \
+    python -m pip install -e ".[dev]"
+    echo "✓ Server dependencies installed"
     cd "$PROJECT_ROOT"
 else
     echo "Using pip for package management..."

@@ -3,7 +3,7 @@ name = "camera-plate-detection"
 version = "0.0.1"
 description = "German license plate detection system for Raspberry Pi with USB camera"
 readme = "README.md"
-requires-python = ">=3.13,<3.14"
+requires-python = ">=3.12"
 license = {text = "MPL-2.0"}
 authors = [
     {name = "Dmitry Ledentsov"}
@@ -37,7 +37,7 @@ dev = [
     "black>=25.12.0",
     "ruff>=0.8.0",
     "mypy>=1.13.0",
-    "types-opencv-python>=4.10.0",
+    "types-opencv-python>=4.10.0; sys_platform != 'win32'",
     "radon>=6.0.0",
     "vulture>=2.14",
 ]
