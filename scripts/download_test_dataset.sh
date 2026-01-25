@@ -335,12 +335,16 @@ download_roboflow() {
     
     # Fallback: Manual download instructions
     echo ""
-    echo "   Manual download (recommended if API doesn't work):"
+    echo "   Manual download (if API doesn't work):"
     echo "   1. Visit: https://universe.roboflow.com/max-mustermann-gmm7j/german-license-plates-hptbz"
-    echo "   2. Click 'Download Dataset' button"
-    echo "   3. Select format: YOLOv8"
-    echo "   4. Download the ZIP file"
-    echo "   5. Extract to: ${roboflow_dir}"
+    echo "   2. Click on a version number (e.g., 'Version 7' - has 1,243 images)"
+    echo "   3. On the version page, click 'Download Dataset' button (top right)"
+    echo "   4. Select format: YOLOv8"
+    echo "   5. Download the ZIP file"
+    echo "   6. Extract to: ${roboflow_dir}"
+    echo ""
+    echo "   Note: You may need a WORKSPACE API key (not project API key) for API downloads."
+    echo "   Get it from: https://app.roboflow.com/ → Workspace Settings → Roboflow API"
     echo ""
     
     # Check if dataset was manually downloaded

@@ -35,8 +35,21 @@ try:
     if not api_key:
         print("NO_API_KEY")
         print("Roboflow requires an API key even for public datasets.")
-        print("Get your API key from: https://app.roboflow.com/")
-        print("Then set: export ROBOFLOW_API_KEY='your-api-key'")
+        print("")
+        print("Get your WORKSPACE API key:")
+        print("  1. Go to: https://app.roboflow.com/")
+        print("  2. Click on your workspace name (top left)")
+        print("  3. Go to 'Workspace Settings' or 'Account Settings'")
+        print("  4. Find 'Roboflow API' section")
+        print("  5. Copy your WORKSPACE API key (not project-specific key)")
+        print("  6. Set: export ROBOFLOW_API_KEY='your-workspace-api-key'")
+        print("")
+        print("Alternative: Download manually from the web interface:")
+        print("  1. Visit: https://universe.roboflow.com/max-mustermann-gmm7j/german-license-plates-hptbz")
+        print("  2. Click on a version number (e.g., 'Version 7')")
+        print("  3. Click 'Download Dataset' button (top right)")
+        print("  4. Select format: YOLOv8")
+        print("  5. Download ZIP and extract to target directory")
         sys.exit(1)
 
     # Initialize Roboflow with API key
