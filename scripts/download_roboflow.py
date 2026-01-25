@@ -88,23 +88,34 @@ try:
 
         # Verify download actually happened
         # Roboflow downloads to subdirectories: train/images/, test/images/, valid/images/
+        # The download is async, so we need to wait for it to complete
         import glob
+        import time
 
         output_dir = sys.argv[1] if len(sys.argv) > 1 else "."
         
-        # Search recursively for images (Roboflow creates train/, test/, valid/ subdirs)
-        images = (
-            glob.glob(os.path.join(output_dir, "**", "*.jpg"), recursive=True)
-            + glob.glob(os.path.join(output_dir, "**", "*.png"), recursive=True)
-            + glob.glob(os.path.join(output_dir, "**", "*.jpeg"), recursive=True)
-        )
+        # Wait for download/extraction to complete (Roboflow shows progress bars)
+        # Give it up to 30 seconds
+        max_wait = 30
+        wait_interval = 2
+        elapsed = 0
         
-        if len(images) > 0:
-            print(f"SUCCESS: {len(images)} images downloaded")
+        while elapsed < max_wait:
+            # Search recursively for images (Roboflow creates train/, test/, valid/ subdirs)
+            images = (
+                glob.glob(os.path.join(output_dir, "**", "*.jpg"), recursive=True)
+                + glob.glob(os.path.join(output_dir, "**", "*.png"), recursive=True)
+                + glob.glob(os.path.join(output_dir, "**", "*.jpeg"), recursive=True)
+            )
+            
+            if len(images) > 0:
+                print(f"SUCCESS: {len(images)} images downloaded")
+                break
+            
+            time.sleep(wait_interval)
+            elapsed += wait_interval
         else:
-            # Double-check: maybe files are still downloading/extracting
-            import time
-            time.sleep(2)  # Wait a bit more
+            # Final check after max wait
             images = (
                 glob.glob(os.path.join(output_dir, "**", "*.jpg"), recursive=True)
                 + glob.glob(os.path.join(output_dir, "**", "*.png"), recursive=True)
@@ -113,9 +124,10 @@ try:
             if len(images) > 0:
                 print(f"SUCCESS: {len(images)} images downloaded")
             else:
-                print("WARNING: Download reported success but no images found")
+                print("WARNING: Download reported success but no images found after waiting")
                 print(f"Checked in: {output_dir}")
-                print("This might be a Roboflow API issue. Try manual download:")
+                print("The download might still be in progress, or there was an issue.")
+                print("Try manual download:")
                 print("https://universe.roboflow.com/max-mustermann-gmm7j/german-license-plates-hptbz")
                 sys.exit(1)
     except Exception as e:
