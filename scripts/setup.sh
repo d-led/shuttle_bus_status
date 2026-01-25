@@ -104,26 +104,38 @@ echo "Installing Python dependencies..."
 # Check if uv is available, use it if so (faster, especially in CI)
 if command -v uv &> /dev/null; then
     echo "Using uv for package management..."
+    # Install camera package
     cd camera
     if [[ "$IS_CI" == "true" ]] || [[ -n "${CI:-}" ]]; then
         uv sync --dev
     else
-        # For local development, install with dev dependencies
         uv sync --dev || uv pip install -e ".[dev]"
     fi
-    echo "✓ Dependencies installed with uv"
+    echo "✓ Camera dependencies installed with uv"
+    
+    # Install server package
+    cd "$PROJECT_ROOT/server"
+    if [[ "$IS_CI" == "true" ]] || [[ -n "${CI:-}" ]]; then
+        uv sync --dev
+    else
+        uv sync --dev || uv pip install -e ".[dev]"
+    fi
+    echo "✓ Server dependencies installed with uv"
+    cd "$PROJECT_ROOT"
 else
     echo "Using pip for package management..."
     python -m pip install --upgrade pip setuptools wheel
-    cd camera
     
-    # Install in development mode with dev dependencies
-    if [[ "$IS_CI" == "true" ]] || [[ -n "${CI:-}" ]]; then
-        python -m pip install -e ".[dev]"
-    else
-        python -m pip install -e ".[dev]"
-    fi
-    echo "✓ Dependencies installed with pip"
+    # Install camera package
+    cd camera
+    python -m pip install -e ".[dev]"
+    echo "✓ Camera dependencies installed with pip"
+    
+    # Install server package
+    cd "$PROJECT_ROOT/server"
+    python -m pip install -e ".[dev]"
+    echo "✓ Server dependencies installed with pip"
+    cd "$PROJECT_ROOT"
 fi
 
 # Verify installation

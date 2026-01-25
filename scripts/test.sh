@@ -83,10 +83,18 @@ echo "4. Running complexity analysis..."
 if python -c "import radon" 2>/dev/null || python3 -c "import radon" 2>/dev/null; then
     if [ -f "$SCRIPT_DIR/analyze_complexity.py" ]; then
         python "$SCRIPT_DIR/analyze_complexity.py" camera || true
+        if [ -d "server/src/server" ]; then
+            python "$SCRIPT_DIR/analyze_complexity.py" server/src/server || true
+        fi
         echo ""
         echo "Checking for dead code with vulture..."
         if run_python_module vulture camera --min-confidence 80 2>/dev/null; then
-            echo "✓ No dead code found"
+            echo "✓ No dead code found in camera"
+        fi
+        if [ -d "server/src/server" ]; then
+            if run_python_module vulture server/src/server --min-confidence 80 2>/dev/null; then
+                echo "✓ No dead code found in server"
+            fi
         fi
         echo "✓ Complexity analysis complete"
     else

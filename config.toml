@@ -54,3 +54,13 @@ log_level = "INFO"
 
 # Whether to also log to stdout
 log_to_console = true
+
+[server]
+# Server host address
+host = "0.0.0.0"
+
+# Server port
+port = 8000
+
+# Whether to enable debug mode
+debug = false
