@@ -42,6 +42,7 @@ async def test_camera_liveview_mount_sets_initial_context() -> None:
     assert socket.context["plates_detected"] == 0
     assert socket.live_title == "Shuttle Bus Status"
     assert socket.context["server_bind"] == "0.0.0.0:8000"
+    assert isinstance(socket.context["feedback_lines"], list)
     assert isinstance(socket.context["config_sections"], list)
 
 
@@ -70,6 +71,7 @@ async def test_camera_liveview_render_renders_html() -> None:
     assert "Camera feed" in html
     assert "Recent activity" in html
     assert "Configuration" in html
+    assert "Feedback" in html
     assert "<table" in html
 
 
@@ -104,7 +106,9 @@ def test_camera_template_renders_with_minimal_assigns() -> None:
             "status": "ready",
             "camera_connected": False,
             "plates_detected": 0,
+            "camera_frame_b64": None,
             "server_bind": "0.0.0.0:8000",
+            "feedback_lines": [],
             "config_sections": [],
         },
         PyViewMeta(socket=UnconnectedSocket()),

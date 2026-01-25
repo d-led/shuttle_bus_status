@@ -12,14 +12,21 @@ Key points:
 
 from __future__ import annotations
 
+import glob
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from pyview import LiveView, LiveViewSocket
+from pyview import LiveView, LiveViewSocket, is_connected
 from pyview.template.live_template import LiveRender, LiveTemplate
 from pyview.vendor import ibis
 from pyview.vendor.ibis.loaders import FileReloader
+
+from server.camera_stream import (
+    CameraStreamControllerProtocol,
+    NullCameraStreamController,
+)
 
 
 @dataclass(frozen=True)
@@ -33,6 +40,8 @@ class ConfigTableRow:
 class CameraLiveViewDependencies:
     server_bind: str
     config_rows: list[ConfigTableRow]
+    feedback_lines: list[str]
+    stream: CameraStreamControllerProtocol
 
 
 @dataclass(frozen=True)
@@ -116,6 +125,41 @@ def _group_config_rows(
     ]
 
 
+def _build_feedback_lines(raw_config: dict[str, Any]) -> list[str]:
+    camera_cfg = raw_config.get("camera", {})
+    device = (
+        camera_cfg.get("device", "auto") if isinstance(camera_cfg, dict) else "auto"
+    )
+
+    logging_cfg = raw_config.get("logging", {})
+    log_plates = (
+        logging_cfg.get("log_plates", "file")
+        if isinstance(logging_cfg, dict)
+        else "file"
+    )
+
+    lines: list[str] = [
+        "Config loaded (config.toml).",
+        f"camera.device = {device!r}",
+        f"logging.log_plates = {log_plates!r}",
+    ]
+
+    if sys.platform == "darwin":
+        lines.append("macOS: demos use AVFoundation (e.g. avfoundation:0).")
+        return lines
+
+    # Linux/RPi: V4L2
+    video_devices = sorted(glob.glob("/dev/video*"))
+    if not video_devices:
+        lines.append("No /dev/video* devices found. Is the camera connected?")
+        return lines
+
+    lines.append(f"Detected video devices: {', '.join(video_devices[:5])}")
+    if len(video_devices) > 5:
+        lines.append(f"... and {len(video_devices) - 5} more")
+    return lines
+
+
 class CameraLiveView(LiveView[dict[str, Any]]):
     """Camera monitoring view.
 
@@ -151,7 +195,9 @@ class CameraLiveView(LiveView[dict[str, Any]]):
             "status": status,
             "camera_connected": camera_connected,
             "plates_detected": int(context.get("plates_detected", 0)),
+            "camera_frame_b64": context.get("camera_frame_b64"),
             "server_bind": self._config.dependencies.server_bind,
+            "feedback_lines": list(self._config.dependencies.feedback_lines),
             "config_sections": _group_config_rows(
                 self._config.dependencies.config_rows
             ),
@@ -167,11 +213,20 @@ class CameraLiveView(LiveView[dict[str, Any]]):
             "camera_connected": False,
             "plates_detected": 0,
             "server_bind": self._config.dependencies.server_bind,
+            "feedback_lines": list(self._config.dependencies.feedback_lines),
             "config_sections": _group_config_rows(
                 self._config.dependencies.config_rows
             ),
         }
         socket.live_title = title
+
+        if is_connected(socket):
+            # Start streaming only for connected sessions (WebSocket).
+            await self._config.dependencies.stream.register(socket)
+
+    async def disconnect(self, socket: LiveViewSocket[dict[str, Any]]) -> None:
+        if is_connected(socket):
+            await self._config.dependencies.stream.unregister(socket)
 
     async def render(self, assigns: dict[str, Any], meta: Any) -> str:
         template_assigns = self._build_template_assigns(assigns)
@@ -189,11 +244,19 @@ def create_camera_live_view(config: LiveViewConfiguration) -> type[CameraLiveVie
 
 
 def build_camera_live_view_dependencies(
-    *, raw_config: dict[str, Any], server_bind: str
+    *,
+    raw_config: dict[str, Any],
+    server_bind: str,
+    stream: CameraStreamControllerProtocol | None = None,
 ) -> CameraLiveViewDependencies:
+    rows = _build_config_rows(raw_config)
+    # Put bind into config table (not in the page header).
+    rows.append(ConfigTableRow(section="Server", key="bind", value=server_bind))
     return CameraLiveViewDependencies(
         server_bind=server_bind,
-        config_rows=_build_config_rows(raw_config),
+        config_rows=rows,
+        feedback_lines=_build_feedback_lines(raw_config),
+        stream=stream or NullCameraStreamController(),
     )
 
 

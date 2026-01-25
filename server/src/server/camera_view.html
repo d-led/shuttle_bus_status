@@ -6,9 +6,6 @@
         {% if status == "ready" %}Ready{% else %}Initializing...{% endif %}
       </span>
       <span class="badge badge-ghost badge-md">PRIVATE</span>
-      <span class="opacity-40">·</span>
-      <span>Bind</span>
-      <code class="px-2 py-1 rounded bg-base-300/60 text-sm">{{ server_bind }}</code>
     </div>
   </div>
 
@@ -40,19 +37,12 @@
 
     <div class="card bg-base-100 shadow-sm">
       <div class="card-body p-4">
-        <div class="font-semibold text-base text-base-content/70">Server</div>
-        <table class="table mt-2">
-          <tbody>
-            <tr>
-              <td>Bind</td>
-              <td class="text-right font-mono">{{ server_bind }}</td>
-            </tr>
-            <tr>
-              <td>Mode</td>
-              <td class="text-right font-semibold">Private</td>
-            </tr>
-          </tbody>
-        </table>
+        <div class="font-semibold text-base text-base-content/70">Feedback</div>
+        <div class="mt-2 bg-base-200/60 border border-base-300 rounded-lg p-3 h-40 overflow-y-auto font-mono text-sm leading-snug">
+          {% for line in feedback_lines %}
+            <div class="text-base-content/70">{{ line }}</div>
+          {% endfor %}
+        </div>
       </div>
     </div>
   </div>
@@ -61,10 +51,20 @@
     <div class="card bg-base-100 shadow-sm lg:col-span-2">
       <div class="card-body p-4">
         <div class="font-semibold text-base text-base-content/70">Camera feed</div>
-        <div class="mt-2 border border-dashed border-base-content/20 rounded-xl p-8 text-center text-base-content/60">
-          <div class="text-3xl opacity-60">📹</div>
-          <div class="mt-1">Camera feed will appear here</div>
-        </div>
+        {% if camera_frame_b64 %}
+          <div class="mt-2 border border-base-content/10 rounded-xl overflow-hidden bg-base-200/40">
+            <img
+              src="data:image/jpeg;base64,{{ camera_frame_b64 }}"
+              class="w-full h-auto block"
+              alt="Camera frame"
+            />
+          </div>
+        {% else %}
+          <div class="mt-2 border border-dashed border-base-content/20 rounded-xl p-8 text-center text-base-content/60">
+            <div class="text-3xl opacity-60">📹</div>
+            <div class="mt-1">Waiting for camera stream…</div>
+          </div>
+        {% endif %}
       </div>
     </div>
 

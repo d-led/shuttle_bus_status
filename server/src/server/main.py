@@ -14,6 +14,11 @@ from starlette.responses import FileResponse, Response
 from starlette.routing import Route
 from starlette.staticfiles import StaticFiles
 
+from server.camera_stream import (
+    CameraStreamConfig,
+    CameraStreamController,
+    resolve_device,
+)
 from server.camera_view import (
     LiveViewConfiguration,
     build_camera_live_view_dependencies,
@@ -102,9 +107,11 @@ def create_camera_app(
     if raw_config is None:
         raw_config = load_raw_config_from_project_root()
 
+    stream = _build_camera_stream(raw_config)
     deps = build_camera_live_view_dependencies(
         raw_config=raw_config,
         server_bind=f"{settings.public_server.host}:{settings.public_server.port}",
+        stream=stream,
     )
     route_display = build_route_display_settings(raw_config=raw_config)
     display_config = build_display_configuration(raw_config=raw_config)
@@ -137,6 +144,26 @@ def create_camera_app(
     )
     app.add_live_view("/", create_camera_live_view(lv_config))
     return app
+
+
+def _build_camera_stream(raw_config: dict[str, Any]) -> CameraStreamController:
+    camera_cfg = raw_config.get("camera", {}) if isinstance(raw_config, dict) else {}
+    raw_device = (
+        camera_cfg.get("device", "auto") if isinstance(camera_cfg, dict) else "auto"
+    )
+    width = camera_cfg.get("width") if isinstance(camera_cfg, dict) else None
+    height = camera_cfg.get("height") if isinstance(camera_cfg, dict) else None
+    fps = camera_cfg.get("fps") if isinstance(camera_cfg, dict) else None
+
+    return CameraStreamController(
+        CameraStreamConfig(
+            device=resolve_device(str(raw_device)),
+            width=int(width) if isinstance(width, int) else None,
+            height=int(height) if isinstance(height, int) else None,
+            fps=int(fps) if isinstance(fps, int) else None,
+            max_fps=2.0,  # keep Pi CPU low; increase later if needed
+        )
+    )
 
 
 def main() -> None:
