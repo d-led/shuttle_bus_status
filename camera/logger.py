@@ -74,49 +74,80 @@ def _create_console_formatter(
     )
 
 
+def _processors_for_processor_formatter(
+    base_processors: list[Processor],
+) -> list[Processor]:
+    return [
+        *base_processors,
+        structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+    ]
+
+
+def _configure_file_and_console(
+    *,
+    log_file: str | Path,
+    level: int,
+    base_processors: list[Processor],
+) -> tuple[list[logging.Handler], list[Processor]]:
+    file_handler = _create_file_handler(log_file, level)
+    console_handler = _create_console_handler(level)
+    file_handler.setFormatter(_create_file_formatter(base_processors))
+    console_handler.setFormatter(_create_console_formatter(base_processors))
+    return [file_handler, console_handler], _processors_for_processor_formatter(
+        base_processors
+    )
+
+
+def _configure_file_only(
+    *,
+    log_file: str | Path,
+    level: int,
+    base_processors: list[Processor],
+) -> tuple[list[logging.Handler], list[Processor]]:
+    file_handler = _create_file_handler(log_file, level)
+    file_handler.setFormatter(_create_file_formatter(base_processors))
+    return [file_handler], _processors_for_processor_formatter(base_processors)
+
+
+def _configure_console_only(
+    *,
+    level: int,
+    base_processors: list[Processor],
+) -> tuple[list[logging.Handler], list[Processor]]:
+    console_handler = _create_console_handler(level)
+    return [console_handler], [*base_processors, structlog.dev.ConsoleRenderer()]
+
+
+def _configure_no_output(
+    *,
+    base_processors: list[Processor],
+) -> tuple[list[logging.Handler], list[Processor]]:
+    # No output (privacy mode). Ensure we don't fall back to logging.lastResort.
+    return [logging.NullHandler()], _processors_for_processor_formatter(base_processors)
+
+
 def _configure_handlers(
     log_file: str | Path | None,
     log_to_console: bool,
     level: int,
 ) -> tuple[list[logging.Handler], list[Processor]]:
     """Configure logging handlers and return handlers and processors."""
-    handlers: list[logging.Handler] = []
     base_processors = _get_base_processors()
 
-    if log_file and log_to_console:
-        # Both file and console
-        file_handler = _create_file_handler(log_file, level)
-        console_handler = _create_console_handler(level)
-        file_handler.setFormatter(_create_file_formatter(base_processors))
-        console_handler.setFormatter(_create_console_formatter(base_processors))
-        handlers.extend([file_handler, console_handler])
-        processors = [
-            *base_processors,
-            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
-        ]
-    elif log_file:
-        # File only
-        file_handler = _create_file_handler(log_file, level)
-        file_handler.setFormatter(_create_file_formatter(base_processors))
-        handlers.append(file_handler)
-        processors = [
-            *base_processors,
-            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
-        ]
-    elif log_to_console:
-        # Console only
-        console_handler = _create_console_handler(level)
-        handlers.append(console_handler)
-        processors = [*base_processors, structlog.dev.ConsoleRenderer()]
-    else:
-        # No output (privacy mode). Ensure we don't fall back to logging.lastResort.
-        handlers.append(logging.NullHandler())
-        processors = [
-            *base_processors,
-            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
-        ]
+    if log_file is not None and log_to_console:
+        return _configure_file_and_console(
+            log_file=log_file, level=level, base_processors=base_processors
+        )
 
-    return handlers, processors
+    if log_file is not None:
+        return _configure_file_only(
+            log_file=log_file, level=level, base_processors=base_processors
+        )
+
+    if log_to_console:
+        return _configure_console_only(level=level, base_processors=base_processors)
+
+    return _configure_no_output(base_processors=base_processors)
 
 
 def setup_logging(
@@ -174,32 +205,25 @@ def configure_from_settings(settings: Any) -> None:
     Args:
         settings: Settings object with logging configuration
     """
-    log_file: str | Path | None = None
-    log_to_console = True
-
     log_plates = "file"
     if hasattr(settings, "logging") and hasattr(settings.logging, "log_plates"):
         log_plates = str(settings.logging.log_plates)
-
-    if log_plates == "file":
-        if hasattr(settings, "logging") and hasattr(settings.logging, "log_file"):
-            log_file = settings.logging.log_file
-        log_to_console = False
-    elif log_plates == "console":
-        log_file = None
-        log_to_console = True
-    elif log_plates == "no":
-        log_file = None
-        log_to_console = False
-    else:
-        raise ValueError("logging.log_plates must be one of: file | console | no")
 
     log_level = "INFO"
     if hasattr(settings, "logging") and hasattr(settings.logging, "log_level"):
         log_level = settings.logging.log_level
 
-    setup_logging(
-        log_level=log_level,
-        log_file=log_file,
-        log_to_console=log_to_console,
-    )
+    if log_plates == "file":
+        log_file = getattr(getattr(settings, "logging", object()), "log_file", None)
+        setup_logging(log_level=log_level, log_file=log_file, log_to_console=False)
+        return
+
+    if log_plates == "console":
+        setup_logging(log_level=log_level, log_file=None, log_to_console=True)
+        return
+
+    if log_plates == "no":
+        setup_logging(log_level=log_level, log_file=None, log_to_console=False)
+        return
+
+    raise ValueError("logging.log_plates must be one of: file | console | no")
