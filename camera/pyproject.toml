@@ -98,7 +98,9 @@ markers = [
 # piwheels provides pre-built wheels for ARM architectures, avoiding compilation
 # Note: piwheels supports 32-bit ARM only, but we're on aarch64
 # PyPI should have aarch64 wheels for most packages
+# In CI (x86_64), we use --index-strategy unsafe-best-match to check all indexes
+# since piwheels may have older package versions
 [[tool.uv.index]]
 name = "piwheels"
 url = "https://www.piwheels.org/simple"
-# Not setting explicit=true allows piwheels to be used as fallback on ARM Linux automatically
+explicit = false

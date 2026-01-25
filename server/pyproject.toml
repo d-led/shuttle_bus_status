@@ -90,6 +90,9 @@ markers = [
 
 [tool.uv]
 # Configure piwheels.org as a fallback index for ARM Linux (Raspberry Pi)
+# In CI (x86_64), we use --index-strategy unsafe-best-match to check all indexes
+# since piwheels may have older package versions
 [[tool.uv.index]]
 name = "piwheels"
 url = "https://www.piwheels.org/simple"
+explicit = false

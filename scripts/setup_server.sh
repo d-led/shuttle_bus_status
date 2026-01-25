@@ -98,7 +98,8 @@ if command -v uv &> /dev/null; then
     echo "Using uv for package management..."
     cd server
     if [[ "$IS_CI" == "true" ]] || [[ -n "${CI:-}" ]]; then
-        uv sync --dev
+        # In CI, use unsafe-best-match to check all indexes (piwheels may have older versions)
+        uv sync --dev --index-strategy unsafe-best-match
     else
         uv sync --dev || uv pip install -e ".[dev]"
     fi

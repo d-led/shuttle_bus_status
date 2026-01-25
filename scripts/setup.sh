@@ -107,7 +107,8 @@ if command -v uv &> /dev/null; then
     # Install camera package
     cd camera
     if [[ "$IS_CI" == "true" ]] || [[ -n "${CI:-}" ]]; then
-        uv sync --dev
+        # In CI, use unsafe-best-match to check all indexes (piwheels may have older versions)
+        uv sync --dev --index-strategy unsafe-best-match
     else
         uv sync --dev || uv pip install -e ".[dev]"
     fi
@@ -116,7 +117,8 @@ if command -v uv &> /dev/null; then
     # Install server package
     cd "$PROJECT_ROOT/server"
     if [[ "$IS_CI" == "true" ]] || [[ -n "${CI:-}" ]]; then
-        uv sync --dev
+        # In CI, use unsafe-best-match to check all indexes
+        uv sync --dev --index-strategy unsafe-best-match
     else
         uv sync --dev || uv pip install -e ".[dev]"
     fi
