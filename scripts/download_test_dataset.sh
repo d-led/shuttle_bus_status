@@ -180,23 +180,30 @@ This directory contains test images for German license plate detection and recog
 
 ### Open Source Options:
 
-1. **Kaggle: European License Plates Dataset** (Recommended)
+1. **Roboflow: German License Plates** (Easiest - Public Domain)
+   - Dataset: https://universe.roboflow.com/max-mustermann-gmm7j/german-license-plates-hptbz
+   - 1,200 images for object detection
+   - License: Public Domain
+   - Download: Visit the link and click "Download Dataset" button
+   - Or use Roboflow API with API key (see script output for instructions)
+
+2. **Kaggle: European License Plates Dataset** (Largest - Requires Account)
    - Dataset: https://www.kaggle.com/datasets/abdelhamidzakaria/european-license-plates-dataset
    - Includes German and other European license plates
-   - Requires Kaggle API: `pip install kaggle`
+   - Requires Kaggle account and API setup
+   - Install: `pip install kaggle`
    - Download: `kaggle datasets download -d abdelhamidzakaria/european-license-plates-dataset`
-   - This downloads actual image files, not repositories
+   - This downloads actual image files
 
-2. **GitHub Sample Images**
+3. **THI License Plate Dataset (TLPD)** (Academic - Requires Contact)
+   - 17,000+ vehicle images, 18,000+ labeled plates
+   - Contact: Alessandro.Zimmer@thi.de
+   - Website: https://www.thi.de/forschung/carissma/c-isafe/thi-license-plate-dataset/
+
+4. **GitHub Sample Images**
    - Downloads specific image files from GitHub repositories using raw.githubusercontent.com
    - Add image URLs to the script to download specific samples
    - No need to clone entire repositories
-
-3. **OpenALPR Train-OCR**
-   - Repository: https://github.com/openalpr/train-ocr
-   - Contains training data for various countries including EU regions
-   - License: AGPL-3.0
-   - Note: You may need to manually download specific image files from this repo
 
 ### Commercial/Paid Options:
 
@@ -215,10 +222,18 @@ This directory contains test images for German license plate detection and recog
 ## Usage
 
 For testing and development, you can:
-1. Use the downloaded sample images (from Kaggle, GitHub, or custom URLs)
-2. Add your own image URLs to `scripts/download_test_dataset.sh` in the appropriate arrays
-3. Generate synthetic plates using ALPR Dataset Generator
-4. Use your own camera to capture test images with `scripts/take-one-photo.sh`
+1. **Roboflow** (Recommended for quick start): Visit the link above and download manually
+2. **Kaggle**: Set up Kaggle API and run the script (it will download automatically)
+3. Add your own image URLs to `scripts/download_test_dataset.sh` in the appropriate arrays
+4. Generate synthetic plates using ALPR Dataset Generator
+5. Use your own camera to capture test images with `scripts/take-one-photo.sh`
+
+## Quick Start
+
+**Easiest option**: Visit https://universe.roboflow.com/max-mustermann-gmm7j/german-license-plates-hptbz
+and download the dataset manually, then extract to `data/test_images/german_plates/roboflow/`
+
+**Automated option**: Set up Kaggle API credentials and the script will download automatically.
 
 ## Adding Custom Image URLs
 
@@ -236,13 +251,50 @@ EOF
     echo "✓ Created dataset info: ${info_file}"
 }
 
+# Method 3: Download from Roboflow (public domain dataset)
+download_roboflow() {
+    local roboflow_dir="${DATASET_DIR}/roboflow"
+    mkdir -p "${roboflow_dir}"
+    
+    echo ""
+    echo "Method 3: Attempting to download from Roboflow..."
+    echo "Dataset: German License Plates (1.2k images, Public Domain)"
+    
+    # Roboflow datasets can be downloaded via their API or direct download
+    # For public datasets, we can try direct download URLs
+    # Note: Roboflow requires API key for programmatic access, but public datasets
+    # can be downloaded manually from: https://universe.roboflow.com/max-mustermann-gmm7j/german-license-plates-hptbz
+    
+    echo "⚠️  Roboflow download requires manual steps or API key:"
+    echo "   1. Visit: https://universe.roboflow.com/max-mustermann-gmm7j/german-license-plates-hptbz"
+    echo "   2. Click 'Download Dataset' button"
+    echo "   3. Select format (YOLO, COCO, etc.)"
+    echo "   4. Download and extract to: ${roboflow_dir}"
+    echo ""
+    echo "   Or use Roboflow API with API key:"
+    echo "   pip install roboflow"
+    echo "   from roboflow import Roboflow"
+    echo "   rf = Roboflow(api_key='YOUR_KEY')"
+    echo "   project = rf.workspace('max-mustermann-gmm7j').project('german-license-plates-hptbz')"
+    echo "   dataset = project.version(1).download('yolov8')"
+    
+    # Check if dataset was manually downloaded
+    if [ -d "${roboflow_dir}" ] && [ "$(find "${roboflow_dir}" -type f \( -name "*.jpg" -o -name "*.png" -o -name "*.jpeg" \) 2>/dev/null | wc -l | tr -d ' ')" -gt 0 ]; then
+        echo "✓ Found images in Roboflow directory"
+        return 0
+    fi
+    
+    return 1
+}
+
 # Method 4: Download from Kaggle (requires kaggle API)
 download_kaggle() {
     local kaggle_dir="${DATASET_DIR}/kaggle"
     mkdir -p "${kaggle_dir}"
     
     echo ""
-    echo "Method 3: Attempting to download from Kaggle..."
+    echo "Method 4: Attempting to download from Kaggle..."
+    echo "Dataset: European License Plates (includes German plates)"
     
     if ! command -v kaggle &> /dev/null; then
         echo "⚠️  Kaggle CLI not found. Install with: pip install kaggle"
@@ -265,12 +317,13 @@ download_kaggle() {
     # European License Plates Dataset (includes German plates)
     if kaggle datasets download -d abdelhamidzakaria/european-license-plates-dataset -p . --unzip 2>&1; then
         echo "✓ Kaggle dataset downloaded and extracted"
+        cd "${PROJECT_ROOT}"
+        return 0
     else
         echo "⚠️  Kaggle download failed. Check your credentials and dataset availability"
+        cd "${PROJECT_ROOT}"
         return 1
     fi
-    
-    cd "${PROJECT_ROOT}"
 }
 
 # Method 5: Download sample images from public sources (if URLs are available)
@@ -279,7 +332,7 @@ download_public_samples() {
     mkdir -p "${samples_dir}"
     
     echo ""
-    echo "Method 4: Creating custom download script for public samples..."
+    echo "Method 5: Creating custom download script for public samples..."
     echo "Note: Direct image URLs may not be available or may change"
     
     # This is a placeholder - actual URLs would need to be verified
@@ -313,7 +366,8 @@ echo ""
 # Try different methods
 download_sample_images || echo "⚠️  Sample images download failed or skipped"
 download_github_images || echo "⚠️  GitHub images download failed or skipped"
-download_kaggle || echo "⚠️  Kaggle download failed or skipped"
+download_roboflow || echo "⚠️  Roboflow download requires manual steps (see instructions above)"
+download_kaggle || echo "⚠️  Kaggle download failed or skipped (requires API setup)"
 download_public_samples || echo "⚠️  Public samples download failed or skipped"
 create_dataset_info
 
