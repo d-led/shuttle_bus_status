@@ -4,6 +4,19 @@ set -euo pipefail
 # Download script for German license plate test/detection datasets
 # Downloads from multiple open-source sources
 # Usage: ./scripts/download_test_dataset.sh [output_directory]
+#
+# QUICK START (Easiest option):
+#   1. Install Roboflow: pip install roboflow
+#   2. Run this script - it will try to download automatically
+#   OR manually download from:
+#      https://universe.roboflow.com/max-mustermann-gmm7j/german-license-plates-hptbz
+#      Extract to: data/test_images/german_plates/roboflow/
+#
+# ALTERNATIVE (Largest dataset):
+#   1. Install Kaggle: pip install kaggle
+#   2. Get API key from https://www.kaggle.com/settings
+#   3. Save to ~/.kaggle/kaggle.json and chmod 600 it
+#   4. Run this script - it will download automatically
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -15,6 +28,9 @@ echo "=========================================="
 echo "German License Plate Dataset Downloader"
 echo "=========================================="
 echo "Output directory: ${DATASET_DIR}"
+echo ""
+echo "Recommended: Install 'roboflow' for automatic download"
+echo "  pip install roboflow"
 echo ""
 
 # Create output directory
