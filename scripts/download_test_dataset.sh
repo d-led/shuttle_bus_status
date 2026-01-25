@@ -71,55 +71,88 @@ extract_archive() {
     echo "✓ Extracted to: ${output_dir}"
 }
 
-# Method 1: OpenALPR Train-OCR (if available)
-download_openalpr() {
-    local openalpr_dir="${DATASET_DIR}/openalpr"
-    mkdir -p "${openalpr_dir}"
+# Method 1: Download sample images from known sources
+download_sample_images() {
+    local samples_dir="${DATASET_DIR}/samples"
+    mkdir -p "${samples_dir}"
     
     echo ""
-    echo "Method 1: Attempting to download OpenALPR training data..."
-    echo "Note: OpenALPR training data may need to be cloned from repository"
+    echo "Method 1: Downloading sample images from public sources..."
     
-    if command -v git &> /dev/null; then
-        if [ ! -d "${openalpr_dir}/train-ocr" ]; then
-            echo "Cloning OpenALPR train-ocr repository..."
-            git clone --depth 1 https://github.com/openalpr/train-ocr.git "${openalpr_dir}/train-ocr" 2>&1 | grep -v "Cloning into" || {
-                echo "⚠️  OpenALPR repository clone failed or already exists"
-                return 1
-            }
-            echo "✓ OpenALPR data cloned"
-        else
-            echo "✓ OpenALPR repository already exists"
+    # Try to download individual sample images
+    # These are example URLs - actual availability may vary
+    local image_urls=(
+        # Add known sample image URLs here
+        # Example format:
+        # "https://raw.githubusercontent.com/user/repo/main/images/sample1.jpg"
+    )
+    
+    local downloaded=0
+    for url in "${image_urls[@]}"; do
+        if [ -n "$url" ]; then
+            local filename=$(basename "$url")
+            local output_file="${samples_dir}/${filename}"
+            
+            if [ ! -f "${output_file}" ]; then
+                echo "  Downloading ${filename}..."
+                if download_file "$url" "$output_file" "$filename"; then
+                    ((downloaded++)) || true
+                fi
+            else
+                echo "  ✓ ${filename} already exists"
+            fi
         fi
+    done
+    
+    if [ $downloaded -gt 0 ]; then
+        echo "✓ Downloaded ${downloaded} sample image(s)"
     else
-        echo "⚠️  git not available, skipping OpenALPR"
+        echo "⚠️  No sample images downloaded (URLs may need to be added)"
     fi
 }
 
-# Method 2: Sample images from GitHub repositories
-download_github_samples() {
-    local github_dir="${DATASET_DIR}/github_samples"
+# Method 2: Extract images from GitHub repositories (download specific image files)
+download_github_images() {
+    local github_dir="${DATASET_DIR}/github_images"
     mkdir -p "${github_dir}"
     
     echo ""
-    echo "Method 2: Downloading sample images from GitHub repositories..."
+    echo "Method 2: Downloading images from GitHub repositories..."
+    echo "Note: This downloads specific image files, not entire repositories"
     
-    # Try to download from known repositories with sample images
-    # Note: These may change, so we'll try a few common patterns
+    # Use GitHub API or raw.githubusercontent.com to download specific image files
+    # Example: Download images from a repository's images/ or data/ directory
     
-    # German License Plate Recognition repository
-    if command -v git &> /dev/null; then
-        local repo_dir="${github_dir}/german_license_plate_recognition"
-        if [ ! -d "${repo_dir}" ]; then
-            echo "Cloning German License Plate Recognition repository..."
-            git clone --depth 1 https://github.com/aboerzel/German_License_Plate_Recognition.git "${repo_dir}" 2>&1 | grep -v "Cloning into" || {
-                echo "⚠️  Repository clone failed (may not exist or be accessible)"
-                return 1
-            }
-            echo "✓ Repository cloned"
-        else
-            echo "✓ Repository already exists"
+    # German License Plate Recognition - try to find and download sample images
+    # Note: Actual paths need to be verified for each repository
+    local repo_base="https://raw.githubusercontent.com"
+    local repos=(
+        # Format: "user/repo/branch/path/to/image.jpg"
+        # Add specific image file paths here when known
+    )
+    
+    local downloaded=0
+    for repo_path in "${repos[@]}"; do
+        if [ -n "$repo_path" ]; then
+            local url="${repo_base}/${repo_path}"
+            local filename=$(basename "$repo_path")
+            local output_file="${github_dir}/${filename}"
+            
+            if [ ! -f "${output_file}" ]; then
+                echo "  Downloading ${filename}..."
+                if download_file "$url" "$output_file" "$filename"; then
+                    ((downloaded++)) || true
+                fi
+            else
+                echo "  ✓ ${filename} already exists"
+            fi
         fi
+    done
+    
+    if [ $downloaded -gt 0 ]; then
+        echo "✓ Downloaded ${downloaded} image(s) from GitHub"
+    else
+        echo "⚠️  No GitHub images downloaded (specific image paths may need to be added)"
     fi
 }
 
@@ -136,20 +169,23 @@ This directory contains test images for German license plate detection and recog
 
 ### Open Source Options:
 
-1. **Kaggle: European License Plates Dataset**
+1. **Kaggle: European License Plates Dataset** (Recommended)
    - Dataset: https://www.kaggle.com/datasets/abdelhamidzakaria/european-license-plates-dataset
    - Includes German and other European license plates
    - Requires Kaggle API: `pip install kaggle`
    - Download: `kaggle datasets download -d abdelhamidzakaria/european-license-plates-dataset`
+   - This downloads actual image files, not repositories
 
-2. **OpenALPR Train-OCR**
+2. **GitHub Sample Images**
+   - Downloads specific image files from GitHub repositories using raw.githubusercontent.com
+   - Add image URLs to the script to download specific samples
+   - No need to clone entire repositories
+
+3. **OpenALPR Train-OCR**
    - Repository: https://github.com/openalpr/train-ocr
    - Contains training data for various countries including EU regions
    - License: AGPL-3.0
-
-3. **German License Plate Recognition**
-   - Repository: https://github.com/aboerzel/German_License_Plate_Recognition
-   - Contains notebooks and sample data for German plates
+   - Note: You may need to manually download specific image files from this repo
 
 ### Commercial/Paid Options:
 
@@ -168,9 +204,16 @@ This directory contains test images for German license plate detection and recog
 ## Usage
 
 For testing and development, you can:
-1. Use the downloaded sample images
-2. Generate synthetic plates using ALPR Dataset Generator
-3. Use your own camera to capture test images with `scripts/take-one-photo.sh`
+1. Use the downloaded sample images (from Kaggle, GitHub, or custom URLs)
+2. Add your own image URLs to `scripts/download_test_dataset.sh` in the appropriate arrays
+3. Generate synthetic plates using ALPR Dataset Generator
+4. Use your own camera to capture test images with `scripts/take-one-photo.sh`
+
+## Adding Custom Image URLs
+
+To download specific images, edit `scripts/download_test_dataset.sh` and add URLs to:
+- `image_urls` array in `download_sample_images()` function
+- `repos` array in `download_github_images()` function (format: "user/repo/branch/path/to/image.jpg")
 
 ## Notes
 
@@ -257,8 +300,8 @@ echo "Starting dataset download..."
 echo ""
 
 # Try different methods
-download_openalpr || echo "⚠️  OpenALPR download failed or skipped"
-download_github_samples || echo "⚠️  GitHub samples download failed or skipped"
+download_sample_images || echo "⚠️  Sample images download failed or skipped"
+download_github_images || echo "⚠️  GitHub images download failed or skipped"
 download_kaggle || echo "⚠️  Kaggle download failed or skipped"
 download_public_samples || echo "⚠️  Public samples download failed or skipped"
 create_dataset_info
