@@ -52,7 +52,7 @@ elif [[ "$OS_TYPE" == "macos" ]]; then
             brew install python3
         else
             echo "Error: python3 not found and Homebrew not available."
-            echo "Please install Python 3.13+ manually or install Homebrew first."
+            echo "Please install Python 3.12+ manually or install Homebrew first."
             exit 1
         fi
     fi
