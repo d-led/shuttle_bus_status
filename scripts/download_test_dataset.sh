@@ -461,16 +461,34 @@ IMAGE_COUNT=$(find "${DATASET_DIR}" -type f \( -name "*.jpg" -o -name "*.jpeg" -
 
 if [ "${IMAGE_COUNT}" -gt 0 ]; then
     echo "✓ Found ${IMAGE_COUNT} image(s)"
+    echo ""
+    echo "Image locations:"
+    find "${DATASET_DIR}" -type d -exec sh -c 'count=$(find "$1" -maxdepth 1 -type f \( -name "*.jpg" -o -name "*.jpeg" -o -name "*.png" -o -name "*.bmp" \) 2>/dev/null | wc -l | tr -d " "); if [ "$count" -gt 0 ]; then echo "  $1: $count images"; fi' _ {} \; 2>/dev/null | grep -v ": 0 images" || true
+    echo ""
+    echo "Sample image files:"
+    find "${DATASET_DIR}" -type f \( -name "*.jpg" -o -name "*.jpeg" -o -name "*.png" \) 2>/dev/null | head -5 | while read -r img; do
+        echo "  ${img}"
+    done
+    if [ "${IMAGE_COUNT}" -gt 5 ]; then
+        echo "  ... and $((IMAGE_COUNT - 5)) more"
+    fi
 else
     echo "⚠️  No images found. You may need to:"
-    echo "   1. Check the cloned repositories for image files"
-    echo "   2. Add custom download URLs to ${DATASET_DIR}/public_samples/download_samples.sh"
-    echo "   3. Use scripts/take-one-photo.sh to capture your own test images"
+    echo "   1. Install roboflow: pip install roboflow (then run script again)"
+    echo "   2. Manually download from: https://universe.roboflow.com/max-mustermann-gmm7j/german-license-plates-hptbz"
+    echo "   3. Set up Kaggle API (see instructions above)"
+    echo "   4. Add custom download URLs to ${DATASET_DIR}/public_samples/download_samples.sh"
+    echo "   5. Use scripts/take-one-photo.sh to capture your own test images"
 fi
 
 echo ""
 echo "Next steps:"
 echo "  1. Review ${DATASET_DIR}/README.md for dataset information"
-echo "  2. Check cloned repositories for available images"
-echo "  3. Consider using synthetic data generation for more samples"
+if [ "${IMAGE_COUNT}" -gt 0 ]; then
+    echo "  2. Images are ready in: ${DATASET_DIR}"
+    echo "  3. Use these images for testing your license plate detection"
+else
+    echo "  2. Follow the download instructions above to get test images"
+    echo "  3. Consider using synthetic data generation for more samples"
+fi
 echo ""
