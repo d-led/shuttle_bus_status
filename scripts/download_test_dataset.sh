@@ -342,7 +342,12 @@ try:
     # Try to access the public dataset
     try:
         project = rf.workspace("max-mustermann-gmm7j").project("german-license-plates-hptbz")
-        dataset = project.version(1).download("yolov8", location=sys.argv[1] if len(sys.argv) > 1 else ".")
+        # Try version 1 first, if that fails try latest version
+        try:
+            dataset = project.version(1).download("yolov8", location=sys.argv[1] if len(sys.argv) > 1 else ".")
+        except:
+            # If version 1 doesn't exist, try downloading without specifying version (gets latest)
+            dataset = project.download("yolov8", location=sys.argv[1] if len(sys.argv) > 1 else ".")
         print("SUCCESS")
     except Exception as e:
         print(f"API_ERROR: {e}")
@@ -436,15 +441,12 @@ download_kaggle() {
     # Check if kaggle credentials are set (either JSON file or environment variable)
     HAS_CREDENTIALS=false
     
-    # Check for JSON file
+    # Check for JSON file first (takes precedence)
     if [ -f "${HOME}/.kaggle/kaggle.json" ]; then
         HAS_CREDENTIALS=true
         echo "✓ Found Kaggle credentials in ~/.kaggle/kaggle.json"
-    fi
-    
-    # Check for environment variable
-    if [ -n "${KAGGLE_API_TOKEN:-}" ]; then
-        HAS_CREDENTIALS=true
+    # Check for environment variable if JSON file doesn't exist
+    elif [ -n "${KAGGLE_API_TOKEN:-}" ]; then
         echo "✓ Found Kaggle API token in KAGGLE_API_TOKEN environment variable"
         # Create temporary JSON file from environment variable
         mkdir -p "${HOME}/.kaggle"
@@ -456,7 +458,8 @@ download_kaggle() {
 {"username":"${KAGGLE_USERNAME}","key":"${KAGGLE_KEY}"}
 EOF
             chmod 600 "${HOME}/.kaggle/kaggle.json" 2>/dev/null || true
-            echo "✓ Created temporary kaggle.json from environment variable"
+            echo "✓ Created kaggle.json from environment variable"
+            HAS_CREDENTIALS=true
         else
             echo "⚠️  KAGGLE_API_TOKEN should be in format 'username:token'"
             HAS_CREDENTIALS=false
