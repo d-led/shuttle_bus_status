@@ -34,6 +34,13 @@ check_command wget || true
 check_command unzip || true
 check_command git || true
 
+# Check for Python (needed for Roboflow API)
+if command -v python3 &> /dev/null; then
+    echo "✓ Python3 found"
+else
+    echo "⚠️  Python3 not found. Some download methods may not work."
+fi
+
 # Function to download from URL
 download_file() {
     local url="$1"
@@ -79,13 +86,13 @@ download_sample_images() {
     echo ""
     echo "Method 1: Downloading sample images from public sources..."
     
-    # Try to download individual sample images
-    # These are example URLs - actual availability may vary
-    # Add known sample image URLs here
-    # Example format:
-    # local image_urls=("https://raw.githubusercontent.com/user/repo/main/images/sample1.jpg")
-    
-    local image_urls=()
+    # Sample image URLs from public sources
+    # These are example/test images that may be available
+    local image_urls=(
+        # Add any direct image URLs here when you find them
+        # Example format:
+        # "https://raw.githubusercontent.com/user/repo/main/images/sample1.jpg"
+    )
     
     # Check if array has any elements before iterating
     if [ ${#image_urls[@]} -eq 0 ]; then
@@ -134,7 +141,10 @@ download_github_images() {
     local repo_base="https://raw.githubusercontent.com"
     # Format: "user/repo/branch/path/to/image.jpg"
     # Add specific image file paths here when known
-    local repos=()
+    local repos=(
+        # Example (uncomment and verify these paths exist):
+        # "aboerzel/German_License_Plate_Recognition/master/data/sample1.jpg"
+    )
     
     # Check if array has any elements before iterating
     if [ ${#repos[@]} -eq 0 ]; then
@@ -260,27 +270,79 @@ download_roboflow() {
     echo "Method 3: Attempting to download from Roboflow..."
     echo "Dataset: German License Plates (1.2k images, Public Domain)"
     
-    # Roboflow datasets can be downloaded via their API or direct download
-    # For public datasets, we can try direct download URLs
-    # Note: Roboflow requires API key for programmatic access, but public datasets
-    # can be downloaded manually from: https://universe.roboflow.com/max-mustermann-gmm7j/german-license-plates-hptbz
+    # Try to use Roboflow Python API if available
+    if python3 -c "import roboflow" 2>/dev/null; then
+        echo "Roboflow Python package found. Attempting download..."
+        
+        # Create a temporary Python script to download
+        local download_script="${roboflow_dir}/_download_roboflow.py"
+        cat > "${download_script}" << 'PYEOF'
+import os
+import sys
+
+try:
+    from roboflow import Roboflow
     
-    echo "⚠️  Roboflow download requires manual steps or API key:"
+    # Public dataset - no API key needed for public datasets
+    # But we'll try without API key first
+    try:
+        rf = Roboflow()
+    except:
+        # If that fails, try with empty key (some public datasets work this way)
+        rf = Roboflow(api_key="")
+    
+    # Try to access the public dataset
+    try:
+        project = rf.workspace("max-mustermann-gmm7j").project("german-license-plates-hptbz")
+        dataset = project.version(1).download("yolov8", location=sys.argv[1] if len(sys.argv) > 1 else ".")
+        print("SUCCESS")
+    except Exception as e:
+        print(f"API_ERROR: {e}")
+        print("Trying alternative method...")
+        # Alternative: direct download URL (if available)
+        raise
+except ImportError:
+    print("ROBOFLOW_NOT_INSTALLED")
+except Exception as e:
+    print(f"ERROR: {e}")
+PYEOF
+
+        cd "${roboflow_dir}"
+        local result=$(python3 "${download_script}" "${roboflow_dir}" 2>&1)
+        
+        if echo "$result" | grep -q "SUCCESS"; then
+            echo "✓ Roboflow dataset downloaded successfully"
+            rm -f "${download_script}"
+            cd "${PROJECT_ROOT}"
+            return 0
+        elif echo "$result" | grep -q "ROBOFLOW_NOT_INSTALLED"; then
+            echo "⚠️  Roboflow Python package not installed"
+            echo "   Install with: pip install roboflow"
+            echo "   Or download manually from:"
+        else
+            echo "⚠️  Roboflow API download failed, trying manual method..."
+        fi
+        rm -f "${download_script}"
+        cd "${PROJECT_ROOT}"
+    else
+        echo "⚠️  Roboflow Python package not installed"
+        echo "   Install with: pip install roboflow"
+        echo "   Or download manually:"
+    fi
+    
+    # Fallback: Manual download instructions
+    echo ""
+    echo "   Manual download (recommended if API doesn't work):"
     echo "   1. Visit: https://universe.roboflow.com/max-mustermann-gmm7j/german-license-plates-hptbz"
     echo "   2. Click 'Download Dataset' button"
-    echo "   3. Select format (YOLO, COCO, etc.)"
-    echo "   4. Download and extract to: ${roboflow_dir}"
+    echo "   3. Select format: YOLOv8"
+    echo "   4. Download the ZIP file"
+    echo "   5. Extract to: ${roboflow_dir}"
     echo ""
-    echo "   Or use Roboflow API with API key:"
-    echo "   pip install roboflow"
-    echo "   from roboflow import Roboflow"
-    echo "   rf = Roboflow(api_key='YOUR_KEY')"
-    echo "   project = rf.workspace('max-mustermann-gmm7j').project('german-license-plates-hptbz')"
-    echo "   dataset = project.version(1).download('yolov8')"
     
     # Check if dataset was manually downloaded
     if [ -d "${roboflow_dir}" ] && [ "$(find "${roboflow_dir}" -type f \( -name "*.jpg" -o -name "*.png" -o -name "*.jpeg" \) 2>/dev/null | wc -l | tr -d ' ')" -gt 0 ]; then
-        echo "✓ Found images in Roboflow directory"
+        echo "✓ Found images in Roboflow directory (manually downloaded)"
         return 0
     fi
     
