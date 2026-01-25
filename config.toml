@@ -1,0 +1,56 @@
+# Configuration for shuttle bus status project
+# Both server and camera components can use this file
+
+[camera]
+# Camera device path. Use "auto" for automatic detection of the first available video device,
+# or specify a specific path like "/dev/video0"
+device = "auto"
+
+# Camera resolution. Use "auto" to use camera's default/native resolution,
+# or specify width and height in pixels (e.g., 1920, 1080)
+width = 1920
+height = 1080
+
+# Camera frame rate (frames per second)
+fps = 30
+
+# Input format (mjpeg, yuyv, etc.). Leave empty for auto-detection
+input_format = ""
+
+[plate_detection]
+# YOLOv8 model to use (nano, small, medium, large, xlarge)
+# nano is fastest but less accurate, xlarge is most accurate but slowest
+model_size = "nano"
+
+# Confidence threshold for plate detection (0.0 to 1.0)
+confidence_threshold = 0.5
+
+# Detection polling interval in seconds
+poll_interval = 1.0
+
+[plate_recognition]
+# Languages for OCR (German is required, add others if needed)
+languages = ["de", "en"]
+
+# Minimum confidence for OCR text recognition (0.0 to 1.0)
+min_confidence = 0.5
+
+[debouncing]
+# Number of detections required before a plate is considered "appeared"
+appearance_count = 3
+
+# Time window in seconds for appearance detection
+appearance_window = 2.0
+
+# Time in seconds a plate must be absent before it's considered "disappeared"
+disappearance_timeout = 5.0
+
+[logging]
+# Log file path (relative to project root or absolute)
+log_file = "logs/plates.log"
+
+# Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+log_level = "INFO"
+
+# Whether to also log to stdout
+log_to_console = true

@@ -1,0 +1,47 @@
+{
+  "summary": {
+    "total_functions": 10,
+    "regular_functions": 10,
+    "protocol_methods": 0,
+    "functions_with_nesting_violations": 1,
+    "functions_with_high_complexity": 0,
+    "functions_with_high_length": 1,
+    "functions_with_too_many_parameters": 0,
+    "protocol_methods_with_too_many_parameters": 0,
+    "functions_with_low_maintainability_index": 0
+  },
+  "functions": [
+    {
+      "file": "camera/logger.py",
+      "function": "setup_logging",
+      "line_start": 25,
+      "line_end": 128,
+      "cyclomatic_complexity": 10,
+      "max_nesting_level": 2,
+      "function_length": 104,
+      "parameter_count": 3,
+      "has_varargs": false,
+      "has_kwargs": false,
+      "parameter_violation": 0,
+      "maintainability_index": 68.33738974405337,
+      "priority_score": 27.0,
+      "is_protocol_method": false
+    },
+    {
+      "file": "camera/config.py",
+      "function": "load_from_project_root",
+      "line_start": 151,
+      "line_end": 176,
+      "cyclomatic_complexity": 6,
+      "max_nesting_level": 3,
+      "function_length": 26,
+      "parameter_count": 1,
+      "has_varargs": false,
+      "has_kwargs": false,
+      "parameter_violation": 0,
+      "maintainability_index": 48.24816510186508,
+      "priority_score": 10.0,
+      "is_protocol_method": false
+    }
+  ]
+}

@@ -35,7 +35,7 @@ cd ~/shuttle_bus_status
 python3 -m venv ~/camera-venv
 source ~/camera-venv/bin/activate
 cd ~/shuttle_bus_status/camera
-pip install -r requirements.txt
+pip install -e ".[dev]"
 ```
 
 ### Verify Camera Access
@@ -68,14 +68,41 @@ v4l2-ctl --device=/dev/video0 --list-formats-ext
 
 ## Configuration
 
-Configuration is managed via `config.toml`. See `config.toml.example` for available options.
+Configuration is managed via `config.toml` in the project root. The configuration includes:
+
+- **Camera settings**: Device path (use "auto" for automatic detection), resolution, frame rate
+- **Plate detection**: YOLOv8 model size, confidence threshold, polling interval
+- **Plate recognition**: OCR languages, minimum confidence
+- **Debouncing**: Appearance/disappearance thresholds
+- **Logging**: Log file path, log level, console output
+
+Example configuration:
+
+```toml
+[camera]
+device = "auto"  # or "/dev/video0" for specific device
+width = 1920
+height = 1080
+fps = 30
+```
+
+See `config.toml` in the project root for all available options.
 
 ## Running
 
+Run from the project root:
+
 ```bash
 source ~/camera-venv/bin/activate
-cd ~/shuttle_bus_status/camera
-python main.py
+cd ~/shuttle_bus_status
+python -m camera.main
+```
+
+Or use the entry point:
+
+```bash
+source ~/camera-venv/bin/activate
+camera-plate-detection
 ```
 
 ## Testing
@@ -88,7 +115,7 @@ Run tests from the project root:
 
 ## Dependencies
 
-All dependencies are specified in `requirements.txt` and `pyproject.toml`. The packages have been selected to use prebuilt aarch64 wheels where available to minimize compilation time on the Raspberry Pi.
+All dependencies are specified in `pyproject.toml`. The packages have been selected to use prebuilt aarch64 wheels where available to minimize compilation time on the Raspberry Pi.
 
 - **opencv-python**: Camera access and image processing (has aarch64 wheels)
 - **ultralytics**: YOLOv8 model framework (platform-agnostic wheels)

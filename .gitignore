@@ -153,6 +153,10 @@ local_settings.py
 db.sqlite3
 db.sqlite3-journal
 
+# Logs directory
+logs/
+!logs/.gitkeep
+
 # Flask stuff:
 instance/
 .webassets-cache
