@@ -3,6 +3,8 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pyview.live_socket import UnconnectedSocket
+from pyview.meta import PyViewMeta
 
 from server.main import (
     IndexLiveView,
@@ -17,25 +19,28 @@ from server.main import (
 async def test_index_liveview_mount() -> None:
     """Test that IndexLiveView mount returns correct state."""
     view = IndexLiveView()
-    state = await view.mount(None, {})
+    socket: UnconnectedSocket[dict[str, object]] = UnconnectedSocket()
+    await view.mount(socket, {})
 
-    assert state["title"] == "Shuttle Bus Status"
+    assert socket.context["title"] == "Shuttle Bus Status"
+    assert socket.live_title == "Shuttle Bus Status"
 
 
 @pytest.mark.asyncio
 async def test_index_liveview_render() -> None:
     """Test that IndexLiveView render produces HTML."""
     view = IndexLiveView()
-    state = await view.mount(None, {})
-    html = await view.render(state)
+    socket: UnconnectedSocket[dict[str, object]] = UnconnectedSocket()
+    await view.mount(socket, {})
+    meta = PyViewMeta(socket=socket)
+    rendered = await view.render(socket.context, meta)
+    html = rendered.text(socket=socket)
 
     assert "Shuttle Bus Status" in html
-    assert "<!DOCTYPE html>" in html
-    assert "<html" in html
 
 
 def test_create_app_returns_starlette_app() -> None:
-    """Test that create_app returns a Starlette application."""
+    """Test that create_app returns an application."""
     app = create_app()
 
     assert app is not None
@@ -53,7 +58,7 @@ def test_create_app_has_index_route() -> None:
 
 
 def test_create_camera_app_returns_starlette_app() -> None:
-    """Test that create_camera_app returns a Starlette application."""
+    """Test that create_camera_app returns an application."""
     app = create_camera_app()
 
     assert app is not None

@@ -1,57 +1,53 @@
 """Main entry point for the server."""
 
-from typing import Any
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
 
 import uvicorn
 from pyview import LiveView
-from starlette.applications import Starlette
-from starlette.routing import Route
+from pyview.live_view import LiveRender, LiveTemplate
+from pyview.pyview import PyView
+from pyview.template import Template
 
 from server.camera_view import CameraLiveView
 from server.config import Settings
+
+if TYPE_CHECKING:
+    from pyview.meta import PyViewMeta
 
 
 class IndexLiveView(LiveView):
     """Main index page live view."""
 
-    async def mount(self, _session: Any, _params: Any) -> dict[str, Any]:
+    async def mount(self, socket: Any, session: Any) -> None:
         """Initialize the live view."""
-        return {"title": "Shuttle Bus Status"}
+        del session
+        socket.context = {"title": "Shuttle Bus Status"}
+        socket.live_title = "Shuttle Bus Status"
 
-    async def render(self, state: dict[str, Any]) -> str:
-        """Render the page."""
-        return f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>{state["title"]}</title>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-        </head>
-        <body>
-            <h1>{state["title"]}</h1>
-            <p>Shuttle bus status monitoring system</p>
-        </body>
-        </html>
-        """
+    async def render(self, assigns: dict[str, Any], meta: PyViewMeta) -> LiveRender:
+        template = LiveTemplate(
+            Template(
+                "<div><h1>{{ title }}</h1><p>Shuttle bus status monitoring system</p></div>",
+                template_id="server.index",
+            )
+        )
+        return LiveRender(template, assigns, meta)
 
 
-def create_app() -> Starlette:
-    """Create and configure the Starlette application."""
-    return Starlette(
-        routes=[
-            Route("/", IndexLiveView()),
-        ]
-    )
+def create_app() -> PyView:
+    """Create and configure the main server application."""
+    app = PyView()
+    app.add_live_view("/", IndexLiveView)
+    return app
 
 
-def create_camera_app() -> Starlette:
+def create_camera_app() -> PyView:
     """Create and configure the camera server application."""
-    return Starlette(
-        routes=[
-            Route("/", CameraLiveView()),
-        ]
-    )
+    app = PyView()
+    app.add_live_view("/", CameraLiveView)
+    return app
 
 
 def main() -> None:
