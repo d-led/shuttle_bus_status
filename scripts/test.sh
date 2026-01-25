@@ -51,7 +51,7 @@ echo ""
 
 # Reformat code with Black first
 echo "Reformatting with Black..."
-run_python_module black camera tests
+run_python_module black camera server/src tests
 echo "✓ Black formatting complete"
 echo ""
 
