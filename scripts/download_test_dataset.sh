@@ -136,12 +136,18 @@ This directory contains test images for German license plate detection and recog
 
 ### Open Source Options:
 
-1. **OpenALPR Train-OCR**
+1. **Kaggle: European License Plates Dataset**
+   - Dataset: https://www.kaggle.com/datasets/abdelhamidzakaria/european-license-plates-dataset
+   - Includes German and other European license plates
+   - Requires Kaggle API: `pip install kaggle`
+   - Download: `kaggle datasets download -d abdelhamidzakaria/european-license-plates-dataset`
+
+2. **OpenALPR Train-OCR**
    - Repository: https://github.com/openalpr/train-ocr
    - Contains training data for various countries including EU regions
    - License: AGPL-3.0
 
-2. **German License Plate Recognition**
+3. **German License Plate Recognition**
    - Repository: https://github.com/aboerzel/German_License_Plate_Recognition
    - Contains notebooks and sample data for German plates
 
@@ -176,13 +182,50 @@ EOF
     echo "✓ Created dataset info: ${info_file}"
 }
 
-# Method 4: Download sample images from public sources (if URLs are available)
+# Method 4: Download from Kaggle (requires kaggle API)
+download_kaggle() {
+    local kaggle_dir="${DATASET_DIR}/kaggle"
+    mkdir -p "${kaggle_dir}"
+    
+    echo ""
+    echo "Method 3: Attempting to download from Kaggle..."
+    
+    if ! command -v kaggle &> /dev/null; then
+        echo "⚠️  Kaggle CLI not found. Install with: pip install kaggle"
+        echo "   Then authenticate: kaggle datasets download -d abdelhamidzakaria/european-license-plates-dataset"
+        return 1
+    fi
+    
+    # Check if kaggle credentials are set
+    if [ ! -f "${HOME}/.kaggle/kaggle.json" ]; then
+        echo "⚠️  Kaggle credentials not found. Please:"
+        echo "   1. Get API token from https://www.kaggle.com/settings"
+        echo "   2. Save to ~/.kaggle/kaggle.json"
+        echo "   3. Run: chmod 600 ~/.kaggle/kaggle.json"
+        return 1
+    fi
+    
+    echo "Downloading European License Plates Dataset from Kaggle..."
+    cd "${kaggle_dir}"
+    
+    # European License Plates Dataset (includes German plates)
+    if kaggle datasets download -d abdelhamidzakaria/european-license-plates-dataset -p . --unzip 2>&1; then
+        echo "✓ Kaggle dataset downloaded and extracted"
+    else
+        echo "⚠️  Kaggle download failed. Check your credentials and dataset availability"
+        return 1
+    fi
+    
+    cd "${PROJECT_ROOT}"
+}
+
+# Method 5: Download sample images from public sources (if URLs are available)
 download_public_samples() {
     local samples_dir="${DATASET_DIR}/public_samples"
     mkdir -p "${samples_dir}"
     
     echo ""
-    echo "Method 3: Attempting to download public sample images..."
+    echo "Method 4: Creating custom download script for public samples..."
     echo "Note: Direct image URLs may not be available or may change"
     
     # This is a placeholder - actual URLs would need to be verified
@@ -216,6 +259,7 @@ echo ""
 # Try different methods
 download_openalpr || echo "⚠️  OpenALPR download failed or skipped"
 download_github_samples || echo "⚠️  GitHub samples download failed or skipped"
+download_kaggle || echo "⚠️  Kaggle download failed or skipped"
 download_public_samples || echo "⚠️  Public samples download failed or skipped"
 create_dataset_info
 
