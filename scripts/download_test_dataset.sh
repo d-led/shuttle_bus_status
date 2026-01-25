@@ -401,20 +401,56 @@ download_kaggle() {
         fi
     fi
     
-    # Check if kaggle credentials are set
-    if [ ! -f "${HOME}/.kaggle/kaggle.json" ]; then
+    # Check if kaggle credentials are set (either JSON file or environment variable)
+    HAS_CREDENTIALS=false
+    
+    # Check for JSON file
+    if [ -f "${HOME}/.kaggle/kaggle.json" ]; then
+        HAS_CREDENTIALS=true
+        echo "✓ Found Kaggle credentials in ~/.kaggle/kaggle.json"
+    fi
+    
+    # Check for environment variable
+    if [ -n "${KAGGLE_API_TOKEN:-}" ]; then
+        HAS_CREDENTIALS=true
+        echo "✓ Found Kaggle API token in KAGGLE_API_TOKEN environment variable"
+        # Create temporary JSON file from environment variable
+        mkdir -p "${HOME}/.kaggle"
+        # KAGGLE_API_TOKEN format: username:token
+        if [[ "${KAGGLE_API_TOKEN}" == *":"* ]]; then
+            KAGGLE_USERNAME="${KAGGLE_API_TOKEN%%:*}"
+            KAGGLE_KEY="${KAGGLE_API_TOKEN#*:}"
+            cat > "${HOME}/.kaggle/kaggle.json" << EOF
+{"username":"${KAGGLE_USERNAME}","key":"${KAGGLE_KEY}"}
+EOF
+            chmod 600 "${HOME}/.kaggle/kaggle.json" 2>/dev/null || true
+            echo "✓ Created temporary kaggle.json from environment variable"
+        else
+            echo "⚠️  KAGGLE_API_TOKEN should be in format 'username:token'"
+            HAS_CREDENTIALS=false
+        fi
+    fi
+    
+    if [ "$HAS_CREDENTIALS" = false ]; then
         echo "⚠️  Kaggle credentials not found. Skipping Kaggle download."
-        echo "   To use Kaggle:"
+        echo "   To use Kaggle, choose one method:"
+        echo ""
+        echo "   Method 1 (JSON file):"
         echo "   1. Get API token from https://www.kaggle.com/settings"
-        echo "   2. Save to ~/.kaggle/kaggle.json"
+        echo "   2. Save to ~/.kaggle/kaggle.json with format:"
+        echo "      {\"username\":\"your-username\",\"key\":\"your-api-key\"}"
         echo "   3. Run: chmod 600 ~/.kaggle/kaggle.json"
-        echo "   4. Run this script again"
+        echo ""
+        echo "   Method 2 (Environment variable):"
+        echo "   export KAGGLE_API_TOKEN='your-username:your-api-key'"
+        echo ""
+        echo "   Then run this script again"
         return 1
     fi
     
     # Verify credentials are valid
     if ! kaggle datasets list --max-size 1 &> /dev/null; then
-        echo "⚠️  Kaggle credentials appear invalid. Please check ~/.kaggle/kaggle.json"
+        echo "⚠️  Kaggle credentials appear invalid. Please check your credentials"
         return 1
     fi
     
