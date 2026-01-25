@@ -106,22 +106,15 @@ if command -v uv &> /dev/null; then
     echo "Using uv for package management..."
     # Install camera package
     cd camera
-    if [[ "$IS_CI" == "true" ]] || [[ -n "${CI:-}" ]]; then
-        # In CI, use unsafe-best-match to check all indexes (piwheels may have older versions)
-        uv sync --dev --index-strategy unsafe-best-match
-    else
-        uv sync --dev || uv pip install -e ".[dev]"
-    fi
+    # Always use unsafe-best-match to check all indexes (piwheels may have older versions)
+    # This is needed on macOS and other non-RPi systems where piwheels shouldn't be prioritized
+    uv sync --dev --index-strategy unsafe-best-match || uv pip install -e ".[dev]"
     echo "✓ Camera dependencies installed with uv"
     
     # Install server package
     cd "$PROJECT_ROOT/server"
-    if [[ "$IS_CI" == "true" ]] || [[ -n "${CI:-}" ]]; then
-        # In CI, use unsafe-best-match to check all indexes
-        uv sync --dev --index-strategy unsafe-best-match
-    else
-        uv sync --dev || uv pip install -e ".[dev]"
-    fi
+    # Always use unsafe-best-match to check all indexes
+    uv sync --dev --index-strategy unsafe-best-match || uv pip install -e ".[dev]"
     echo "✓ Server dependencies installed with uv"
     cd "$PROJECT_ROOT"
 else

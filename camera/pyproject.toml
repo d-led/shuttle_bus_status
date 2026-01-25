@@ -41,6 +41,10 @@ dev = [
     "radon>=6.0.0",
     "vulture>=2.14",
 ]
+dataset = [
+    "roboflow>=1.1.0",
+    "kaggle>=1.6.0",
+]
 
 [project.scripts]
 camera-plate-detection = "camera.main:main"

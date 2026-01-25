@@ -286,7 +286,20 @@ download_roboflow() {
     echo "Method 3: Attempting to download from Roboflow..."
     echo "Dataset: German License Plates (1.2k images, Public Domain)"
     
-    # Try to use Roboflow Python API if available
+    # Try to install roboflow if not available
+    if ! python3 -c "import roboflow" 2>/dev/null; then
+        echo "Installing roboflow package..."
+        if python3 -m pip install --quiet roboflow 2>/dev/null; then
+            echo "✓ roboflow installed"
+        else
+            echo "⚠️  Failed to install roboflow automatically"
+            echo "   Try manually: pip install roboflow"
+            echo "   Or download manually from: https://universe.roboflow.com/max-mustermann-gmm7j/german-license-plates-hptbz"
+            return 1
+        fi
+    fi
+    
+    # Try to use Roboflow Python API
     if python3 -c "import roboflow" 2>/dev/null; then
         echo "Roboflow Python package found. Attempting download..."
         
@@ -374,18 +387,34 @@ download_kaggle() {
     echo "Method 4: Attempting to download from Kaggle..."
     echo "Dataset: European License Plates (includes German plates)"
     
+    # Try to install kaggle if not available
     if ! command -v kaggle &> /dev/null; then
-        echo "⚠️  Kaggle CLI not found. Install with: pip install kaggle"
-        echo "   Then authenticate: kaggle datasets download -d abdelhamidzakaria/european-license-plates-dataset"
-        return 1
+        if ! python3 -c "import kaggle" 2>/dev/null; then
+            echo "Installing kaggle package..."
+            if python3 -m pip install --quiet kaggle 2>/dev/null; then
+                echo "✓ kaggle installed"
+            else
+                echo "⚠️  Failed to install kaggle automatically"
+                echo "   Try manually: pip install kaggle"
+                return 1
+            fi
+        fi
     fi
     
     # Check if kaggle credentials are set
     if [ ! -f "${HOME}/.kaggle/kaggle.json" ]; then
-        echo "⚠️  Kaggle credentials not found. Please:"
+        echo "⚠️  Kaggle credentials not found. Skipping Kaggle download."
+        echo "   To use Kaggle:"
         echo "   1. Get API token from https://www.kaggle.com/settings"
         echo "   2. Save to ~/.kaggle/kaggle.json"
         echo "   3. Run: chmod 600 ~/.kaggle/kaggle.json"
+        echo "   4. Run this script again"
+        return 1
+    fi
+    
+    # Verify credentials are valid
+    if ! kaggle datasets list --max-size 1 &> /dev/null; then
+        echo "⚠️  Kaggle credentials appear invalid. Please check ~/.kaggle/kaggle.json"
         return 1
     fi
     
