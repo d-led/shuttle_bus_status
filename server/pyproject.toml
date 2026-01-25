@@ -38,6 +38,7 @@ dev = [
 
 [project.scripts]
 shuttle-bus-status-server = "server.main:main"
+shuttle-bus-status-camera-server = "server.main:main_camera"
 
 [build-system]
 requires = ["hatchling"]
@@ -90,9 +91,11 @@ markers = [
 
 [tool.uv]
 # Configure piwheels.org as a fallback index for ARM Linux (Raspberry Pi)
-# In CI (x86_64), we use --index-strategy unsafe-best-match to check all indexes
-# since piwheels may have older package versions
+# piwheels provides pre-built wheels for ARM architectures, avoiding compilation
+# Without explicit=true, uv will automatically use piwheels as a fallback when PyPI doesn't have ARM wheels
+# This works out of the box - no special cases needed!
+# !!!DO NOT REMOVE THIS!!!
 [[tool.uv.index]]
 name = "piwheels"
 url = "https://www.piwheels.org/simple"
-explicit = false
+# Not setting explicit=true allows piwheels to be used as fallback on ARM Linux automatically

@@ -5,6 +5,7 @@ from pyview import LiveView
 from starlette.applications import Starlette
 from starlette.routing import Route
 
+from server.camera_view import CameraLiveView
 from server.config import Settings
 
 
@@ -42,6 +43,15 @@ def create_app() -> Starlette:
     )
 
 
+def create_camera_app() -> Starlette:
+    """Create and configure the camera server application."""
+    return Starlette(
+        routes=[
+            Route("/", CameraLiveView()),
+        ]
+    )
+
+
 def main() -> None:
     """Main entry point for the server."""
     settings = Settings.load_from_project_root()
@@ -51,6 +61,18 @@ def main() -> None:
         host=settings.server.host,
         port=settings.server.port,
         log_level="debug" if settings.server.debug else "info",
+    )
+
+
+def main_camera() -> None:
+    """Main entry point for the camera server (Raspberry Pi)."""
+    settings = Settings.load_from_project_root()
+    app = create_camera_app()
+    uvicorn.run(
+        app,
+        host=settings.public_server.host,
+        port=settings.public_server.port,
+        log_level="debug" if settings.public_server.debug else "info",
     )
 
 

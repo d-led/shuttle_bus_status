@@ -10,21 +10,9 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 cd "$PROJECT_ROOT"
 
-# Detect environment
-IS_CI="${CI:-false}"
-OS_TYPE="unknown"
-
-if [[ "$IS_CI" == "true" ]] || [[ -n "${CI:-}" ]]; then
-    OS_TYPE="ci"
-elif [[ -f /etc/os-release ]]; then
-    if grep -q "Raspberry Pi" /proc/device-tree/model 2>/dev/null || grep -qi "raspberry" /etc/os-release; then
-        OS_TYPE="raspberrypi"
-    else
-        OS_TYPE="linux"
-    fi
-elif [[ "$OSTYPE" == "darwin"* ]]; then
-    OS_TYPE="macos"
-fi
+# Source common environment setup
+# Don't suppress errors - we want to see what's happening
+source "$SCRIPT_DIR/common_env.sh"
 
 echo "=========================================="
 echo "Server Setup"
@@ -33,17 +21,24 @@ echo "Detected environment: $OS_TYPE"
 echo ""
 
 # Install system dependencies
-if [[ "$OS_TYPE" == "raspberrypi" ]] || [[ "$OS_TYPE" == "linux" ]]; then
+if [[ "$OS_TYPE" == "raspberrypi" ]] || [[ "$OS_TYPE" == "linux" ]] || [[ "$OS_TYPE" == "ci" ]]; then
     echo ""
-    echo "Installing system dependencies (Linux/Raspberry Pi)..."
+    if [[ "$OS_TYPE" == "ci" ]]; then
+        echo "Installing system dependencies (CI environment)..."
+    else
+        echo "Installing system dependencies (Linux/Raspberry Pi)..."
+    fi
+    # In CI, Python is usually pre-installed by actions/setup-python, but we verify
+    # and install any missing dependencies. For server, we mainly need Python and pip.
     if command -v sudo &> /dev/null; then
         sudo apt-get update
-        sudo apt-get install -y python3 python3-pip python3-venv
+        sudo apt-get install -y python3 python3-pip python3-venv || true
     else
-        apt-get update
-        apt-get install -y python3 python3-pip python3-venv
+        # In CI, we might not need sudo (running as root or with permissions)
+        apt-get update || true
+        apt-get install -y python3 python3-pip python3-venv || true
     fi
-    echo "✓ System dependencies installed"
+    echo "✓ System dependencies installed/verified"
 elif [[ "$OS_TYPE" == "macos" ]]; then
     echo ""
     echo "Installing system dependencies (macOS)..."
@@ -57,20 +52,19 @@ elif [[ "$OS_TYPE" == "macos" ]]; then
         fi
     fi
     echo "✓ System dependencies installed"
-elif [[ "$OS_TYPE" == "ci" ]]; then
-    echo ""
-    echo "Skipping system dependencies (CI environment)..."
-    echo "Assuming Python and pip are pre-installed"
 fi
 
 # Create virtual environment
 echo ""
 echo "Setting up virtual environment..."
 
-if [[ "$OS_TYPE" == "raspberrypi" ]]; then
-    VENV_DIR="$HOME/server-venv"
-else
-    VENV_DIR="$PROJECT_ROOT/.venv"
+# Use VENV_DIR from common_env.sh if available, otherwise determine it
+if [ -z "${VENV_DIR:-}" ]; then
+    if [[ "$OS_TYPE" == "raspberrypi" ]]; then
+        VENV_DIR="$HOME/server-venv"
+    else
+        VENV_DIR="$PROJECT_ROOT/.venv"
+    fi
 fi
 
 if [ ! -d "$VENV_DIR" ]; then
@@ -82,6 +76,7 @@ fi
 
 # Activate virtual environment
 source "$VENV_DIR/bin/activate"
+export VIRTUAL_ENV_ACTIVATED=true
 
 # Upgrade pip
 echo ""
@@ -97,12 +92,10 @@ echo "Installing Python dependencies..."
 if command -v uv &> /dev/null; then
     echo "Using uv for package management..."
     cd server
-    if [[ "$IS_CI" == "true" ]] || [[ -n "${CI:-}" ]]; then
-        # In CI, use unsafe-best-match to check all indexes (piwheels may have older versions)
-        uv sync --dev --index-strategy unsafe-best-match
-    else
-        uv sync --dev || uv pip install -e ".[dev]"
-    fi
+    # Always use unsafe-best-match to check all indexes
+    # This ensures piwheels (ARM-only) doesn't cause issues on macOS/x86_64
+    # On Raspberry Pi, piwheels will still be used as fallback when needed
+    uv sync --dev --index-strategy unsafe-best-match || uv pip install -e ".[dev]" || python -m pip install -e ".[dev]"
     echo "✓ Dependencies installed with uv"
     cd "$PROJECT_ROOT"
 else

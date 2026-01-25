@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     )
 
     server: ServerSettings = Field(default_factory=ServerSettings)
+    public_server: ServerSettings = Field(default_factory=ServerSettings)
 
     @classmethod
     def load_from_project_root(cls, project_root: Path | None = None) -> "Settings":
