@@ -55,81 +55,67 @@ try:
     # Initialize Roboflow with API key
     rf = Roboflow(api_key=api_key)
 
-    # Try to access the public dataset
+    # Get output directory (must be absolute path)
+    output_dir = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else ".")
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Roboflow downloads to the current working directory, not the location parameter
+    # So we need to change to the target directory before downloading
+    original_cwd = os.getcwd()
     try:
-        project = rf.workspace("max-mustermann-gmm7j").project("german-license-plates-hptbz")
-        # Get latest version (version 7 has the most images: 1243)
-        # Try to get the latest version number, or just download latest
+        os.chdir(output_dir)
+
+        # Try to access the public dataset
         try:
-            versions = project.list_versions()
-            if versions and len(versions) > 0:
-                # Get the version with the most images (usually the latest)
-                latest_version = max(versions, key=lambda v: v.get("images", 0))
-                version_num = latest_version["id"].split("/")[-1]
-                output_dir = sys.argv[1] if len(sys.argv) > 1 else "."
-                dataset = project.version(int(version_num)).download(
-                    "yolov8", location=output_dir
-                )
-            else:
-                # Fallback: try version 7 (latest based on test)
-                output_dir = sys.argv[1] if len(sys.argv) > 1 else "."
-                dataset = project.version(7).download(
-                    "yolov8", location=output_dir
-                )
-        except Exception as ve:
-            # If version detection fails, try downloading latest without version number
+            project = rf.workspace("max-mustermann-gmm7j").project("german-license-plates-hptbz")
+            # Get latest version (version 7 has the most images: 1243)
+            # Try to get the latest version number, or just download latest
             try:
-                output_dir = sys.argv[1] if len(sys.argv) > 1 else "."
-                dataset = project.download("yolov8", location=output_dir)
-            except Exception:
-                # Last resort: try version 7
-                output_dir = sys.argv[1] if len(sys.argv) > 1 else "."
-                dataset = project.version(7).download("yolov8", location=output_dir)
+                versions = project.list_versions()
+                if versions and len(versions) > 0:
+                    # Get the version with the most images (usually the latest)
+                    latest_version = max(versions, key=lambda v: v.get("images", 0))
+                    version_num = latest_version["id"].split("/")[-1]
+                    dataset = project.version(int(version_num)).download("yolov8")
+                else:
+                    # Fallback: try version 7 (latest based on test)
+                    dataset = project.version(7).download("yolov8")
+            except Exception as ve:
+                # If version detection fails, try downloading latest without version number
+                try:
+                    dataset = project.download("yolov8")
+                except Exception:
+                    # Last resort: try version 7
+                    dataset = project.version(7).download("yolov8")
+        except Exception as e:
+            # Change back to original directory before raising
+            os.chdir(original_cwd)
+            raise
+
+        # Change back to original directory
+        os.chdir(original_cwd)
 
         # Verify download actually happened
-        # Roboflow downloads to subdirectories: train/images/, test/images/, valid/images/
-        # The download is async, so we need to wait for it to complete
+        # Roboflow downloads to a subdirectory like "german-license-plates-7/"
+        # which contains train/images/, test/images/, valid/images/
         import glob
-        import time
 
-        output_dir = sys.argv[1] if len(sys.argv) > 1 else "."
-        
-        # Wait for download/extraction to complete (Roboflow shows progress bars)
-        # Give it up to 30 seconds
-        max_wait = 30
-        wait_interval = 2
-        elapsed = 0
-        
-        while elapsed < max_wait:
-            # Search recursively for images (Roboflow creates train/, test/, valid/ subdirs)
-            images = (
-                glob.glob(os.path.join(output_dir, "**", "*.jpg"), recursive=True)
-                + glob.glob(os.path.join(output_dir, "**", "*.png"), recursive=True)
-                + glob.glob(os.path.join(output_dir, "**", "*.jpeg"), recursive=True)
-            )
-            
-            if len(images) > 0:
-                print(f"SUCCESS: {len(images)} images downloaded")
-                break
-            
-            time.sleep(wait_interval)
-            elapsed += wait_interval
+        # Search recursively for images (Roboflow creates a dataset subdirectory)
+        images = (
+            glob.glob(os.path.join(output_dir, "**", "*.jpg"), recursive=True)
+            + glob.glob(os.path.join(output_dir, "**", "*.png"), recursive=True)
+            + glob.glob(os.path.join(output_dir, "**", "*.jpeg"), recursive=True)
+        )
+
+        if len(images) > 0:
+            print(f"SUCCESS: {len(images)} images downloaded")
         else:
-            # Final check after max wait
-            images = (
-                glob.glob(os.path.join(output_dir, "**", "*.jpg"), recursive=True)
-                + glob.glob(os.path.join(output_dir, "**", "*.png"), recursive=True)
-                + glob.glob(os.path.join(output_dir, "**", "*.jpeg"), recursive=True)
-            )
-            if len(images) > 0:
-                print(f"SUCCESS: {len(images)} images downloaded")
-            else:
-                print("WARNING: Download reported success but no images found after waiting")
-                print(f"Checked in: {output_dir}")
-                print("The download might still be in progress, or there was an issue.")
-                print("Try manual download:")
-                print("https://universe.roboflow.com/max-mustermann-gmm7j/german-license-plates-hptbz")
-                sys.exit(1)
+            print("WARNING: Download reported success but no images found")
+            print(f"Checked in: {output_dir}")
+            print("The download might have failed silently.")
+            print("Try manual download:")
+            print("https://universe.roboflow.com/max-mustermann-gmm7j/german-license-plates-hptbz")
+            sys.exit(1)
     except Exception as e:
         print(f"API_ERROR: {e}")
         import traceback
