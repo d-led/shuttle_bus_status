@@ -87,21 +87,37 @@ try:
                 dataset = project.version(7).download("yolov8", location=output_dir)
 
         # Verify download actually happened
+        # Roboflow downloads to subdirectories: train/images/, test/images/, valid/images/
         import glob
 
         output_dir = sys.argv[1] if len(sys.argv) > 1 else "."
+        
+        # Search recursively for images (Roboflow creates train/, test/, valid/ subdirs)
         images = (
             glob.glob(os.path.join(output_dir, "**", "*.jpg"), recursive=True)
             + glob.glob(os.path.join(output_dir, "**", "*.png"), recursive=True)
             + glob.glob(os.path.join(output_dir, "**", "*.jpeg"), recursive=True)
         )
+        
         if len(images) > 0:
             print(f"SUCCESS: {len(images)} images downloaded")
         else:
-            print("WARNING: Download reported success but no images found")
-            print("This might be a Roboflow API issue. Try manual download:")
-            print("https://universe.roboflow.com/max-mustermann-gmm7j/german-license-plates-hptbz")
-            sys.exit(1)
+            # Double-check: maybe files are still downloading/extracting
+            import time
+            time.sleep(2)  # Wait a bit more
+            images = (
+                glob.glob(os.path.join(output_dir, "**", "*.jpg"), recursive=True)
+                + glob.glob(os.path.join(output_dir, "**", "*.png"), recursive=True)
+                + glob.glob(os.path.join(output_dir, "**", "*.jpeg"), recursive=True)
+            )
+            if len(images) > 0:
+                print(f"SUCCESS: {len(images)} images downloaded")
+            else:
+                print("WARNING: Download reported success but no images found")
+                print(f"Checked in: {output_dir}")
+                print("This might be a Roboflow API issue. Try manual download:")
+                print("https://universe.roboflow.com/max-mustermann-gmm7j/german-license-plates-hptbz")
+                sys.exit(1)
     except Exception as e:
         print(f"API_ERROR: {e}")
         import traceback
