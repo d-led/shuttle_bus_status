@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Download German License Plates dataset from Roboflow."""
+"""Download German License Plates dataset from Roboflow.
+
+To download manually:
+1. Visit: https://universe.roboflow.com/max-mustermann-gmm7j/german-license-plates-hptbz
+2. Click on a version (e.g., "Version 7" or latest version)
+3. Look for "Download" or "Export" button in the version page
+4. Select format: YOLOv8
+5. Download and extract to the target directory
+"""
 
 import os
 import sys
