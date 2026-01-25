@@ -64,3 +64,14 @@ port = 8000
 
 # Whether to enable debug mode
 debug = false
+
+[public_server]
+
+# Server host address
+host = "0.0.0.0"
+
+# Server port
+port = 8000
+
+# Whether to enable debug mode
+debug = false
