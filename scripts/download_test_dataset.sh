@@ -81,11 +81,17 @@ download_sample_images() {
     
     # Try to download individual sample images
     # These are example URLs - actual availability may vary
-    local image_urls=(
-        # Add known sample image URLs here
-        # Example format:
-        # "https://raw.githubusercontent.com/user/repo/main/images/sample1.jpg"
-    )
+    # Add known sample image URLs here
+    # Example format:
+    # local image_urls=("https://raw.githubusercontent.com/user/repo/main/images/sample1.jpg")
+    
+    local image_urls=()
+    
+    # Check if array has any elements before iterating
+    if [ ${#image_urls[@]} -eq 0 ]; then
+        echo "⚠️  No image URLs configured. Add URLs to download_sample_images() function"
+        return 0
+    fi
     
     local downloaded=0
     for url in "${image_urls[@]}"; do
@@ -126,10 +132,15 @@ download_github_images() {
     # German License Plate Recognition - try to find and download sample images
     # Note: Actual paths need to be verified for each repository
     local repo_base="https://raw.githubusercontent.com"
-    local repos=(
-        # Format: "user/repo/branch/path/to/image.jpg"
-        # Add specific image file paths here when known
-    )
+    # Format: "user/repo/branch/path/to/image.jpg"
+    # Add specific image file paths here when known
+    local repos=()
+    
+    # Check if array has any elements before iterating
+    if [ ${#repos[@]} -eq 0 ]; then
+        echo "⚠️  No GitHub image paths configured. Add paths to download_github_images() function"
+        return 0
+    fi
     
     local downloaded=0
     for repo_path in "${repos[@]}"; do
