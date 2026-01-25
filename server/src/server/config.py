@@ -1,6 +1,7 @@
 """Server configuration management."""
 
 from pathlib import Path
+from typing import Any
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -43,18 +44,20 @@ class Settings(BaseSettings):
     server: ServerSettings = Field(default_factory=ServerSettings)
     public_server: ServerSettings = Field(default_factory=ServerSettings)
 
+    @staticmethod
+    def _find_project_root() -> Path:
+        """Find project root by looking for config.toml."""
+        current = Path.cwd()
+        for parent in [current, *current.parents]:
+            if (parent / "config.toml").exists():
+                return parent
+        return current
+
     @classmethod
     def load_from_project_root(cls, project_root: Path | None = None) -> "Settings":
         """Load settings from config.toml in project root."""
         if project_root is None:
-            # Try to find project root by looking for config.toml
-            current = Path.cwd()
-            for parent in [current, *current.parents]:
-                if (parent / "config.toml").exists():
-                    project_root = parent
-                    break
-            if project_root is None:
-                project_root = current
+            project_root = cls._find_project_root()
 
         config_file = project_root / "config.toml"
         if not config_file.exists():
@@ -67,3 +70,21 @@ class Settings(BaseSettings):
             toml_data = tomllib.load(f)
 
         return cls(**toml_data)
+
+
+def load_raw_config_from_project_root(
+    project_root: Path | None = None,
+) -> dict[str, Any]:
+    """Load raw TOML data from the project's `config.toml`."""
+    if project_root is None:
+        project_root = Settings._find_project_root()
+
+    config_file = project_root / "config.toml"
+    if not config_file.exists():
+        raise FileNotFoundError(
+            f"Configuration file not found: {config_file}. "
+            "Please create config.toml in the project root."
+        )
+
+    with config_file.open("rb") as f:
+        return tomllib.load(f)

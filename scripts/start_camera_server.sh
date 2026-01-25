@@ -41,4 +41,4 @@ echo ""
 # Set PYTHONPATH to include server/src
 export PYTHONPATH="$PROJECT_ROOT/server/src:$PYTHONPATH"
 
-python -c "from server.main import main_camera; main_camera()"
+exec python -c "from server.main import main_camera; main_camera()"

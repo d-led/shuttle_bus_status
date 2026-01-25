@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="{{ theme }}">
+<head>
+  <title>{{ title }}</title>
+  <meta charset="UTF-8" />
+  <meta name="csrf-token" content="{{ csrf_token }}" />
+  <!-- Viewport meta tag to prevent zooming on iOS devices -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <!-- Minimal DaisyUI for theme support only -->
+  <link href="https://cdn.jsdelivr.net/npm/daisyui@5" rel="stylesheet" type="text/css" />
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  {{ css_vars_markup }}
+  <script defer type="text/javascript" src="/static/assets/app.js"></script>
+  {% for el in additional_head_elements %}
+    {{ el }}
+  {% endfor %}
+</head>
+<body>
+  {{ main_content }}
+</body>
+</html>
+

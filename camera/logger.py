@@ -103,11 +103,18 @@ def _configure_handlers(
             *base_processors,
             structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
         ]
-    else:
+    elif log_to_console:
         # Console only
         console_handler = _create_console_handler(level)
         handlers.append(console_handler)
         processors = [*base_processors, structlog.dev.ConsoleRenderer()]
+    else:
+        # No output (privacy mode). Ensure we don't fall back to logging.lastResort.
+        handlers.append(logging.NullHandler())
+        processors = [
+            *base_processors,
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+        ]
 
     return handlers, processors
 
@@ -167,17 +174,29 @@ def configure_from_settings(settings: Any) -> None:
     Args:
         settings: Settings object with logging configuration
     """
-    log_file = None
-    if hasattr(settings, "logging") and hasattr(settings.logging, "log_file"):
-        log_file = settings.logging.log_file
+    log_file: str | Path | None = None
+    log_to_console = True
+
+    log_plates = "file"
+    if hasattr(settings, "logging") and hasattr(settings.logging, "log_plates"):
+        log_plates = str(settings.logging.log_plates)
+
+    if log_plates == "file":
+        if hasattr(settings, "logging") and hasattr(settings.logging, "log_file"):
+            log_file = settings.logging.log_file
+        log_to_console = False
+    elif log_plates == "console":
+        log_file = None
+        log_to_console = True
+    elif log_plates == "no":
+        log_file = None
+        log_to_console = False
+    else:
+        raise ValueError("logging.log_plates must be one of: file | console | no")
 
     log_level = "INFO"
     if hasattr(settings, "logging") and hasattr(settings.logging, "log_level"):
         log_level = settings.logging.log_level
-
-    log_to_console = True
-    if hasattr(settings, "logging") and hasattr(settings.logging, "log_to_console"):
-        log_to_console = settings.logging.log_to_console
 
     setup_logging(
         log_level=log_level,

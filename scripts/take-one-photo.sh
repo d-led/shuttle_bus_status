@@ -8,18 +8,37 @@ OUTPUT_DIR="${1:-/tmp}"
 TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
 OUTPUT_FILE="${OUTPUT_DIR}/camera_${TIMESTAMP}.jpg"
 
-echo "Capturing photo from /dev/video0..."
+# Resolve device from config.toml (no inline Python).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+DEVICE="$(PYTHONPATH="${PROJECT_ROOT}" python "${SCRIPT_DIR}/detect_camera_device.py")"
+
+echo "Capturing photo from ${DEVICE}..."
 echo "Output: ${OUTPUT_FILE}"
 
-# Use ffmpeg to capture a single frame
-ffmpeg -f v4l2 \
-    -input_format mjpeg \
-    -video_size 1920x1080 \
-    -i /dev/video0 \
-    -frames:v 1 \
-    -q:v 2 \
-    -y "${OUTPUT_FILE}" \
-    > /dev/null 2>&1
+if [[ "${DEVICE}" == avfoundation:* ]]; then
+    # macOS (AVFoundation). The part after ":" is a numeric device index.
+    AV_INDEX="${DEVICE#avfoundation:}"
+    ffmpeg -f avfoundation \
+        -framerate 30 \
+        -video_size 1920x1080 \
+        -i "${AV_INDEX}" \
+        -frames:v 1 \
+        -q:v 2 \
+        -y "${OUTPUT_FILE}" \
+        > /dev/null 2>&1
+else
+    # Linux/RPi (V4L2).
+    ffmpeg -f v4l2 \
+        -input_format mjpeg \
+        -video_size 1920x1080 \
+        -i "${DEVICE}" \
+        -frames:v 1 \
+        -q:v 2 \
+        -y "${OUTPUT_FILE}" \
+        > /dev/null 2>&1
+fi
 
 if [ -f "${OUTPUT_FILE}" ]; then
     FILE_SIZE=$(du -h "${OUTPUT_FILE}" | cut -f1)

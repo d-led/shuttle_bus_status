@@ -73,6 +73,22 @@ def test_create_camera_app_has_root_route() -> None:
     assert "/" in route_paths
 
 
+def test_create_camera_app_mounts_static_assets() -> None:
+    """Camera app must serve PyView client JS under /static/assets/app.js."""
+    app = create_camera_app()
+    route_paths = [getattr(route, "path", None) for route in app.routes]
+    assert "/static" in route_paths
+    assert "/static/assets/app.js" in route_paths
+
+
+def test_create_app_mounts_static_assets() -> None:
+    """Main app must serve PyView client JS under /static/assets/app.js."""
+    app = create_app()
+    route_paths = [getattr(route, "path", None) for route in app.routes]
+    assert "/static" in route_paths
+    assert "/static/assets/app.js" in route_paths
+
+
 @patch("server.main.uvicorn.run")
 @patch("server.main.Settings.load_from_project_root")
 def test_main_loads_server_config(
@@ -100,9 +116,10 @@ def test_main_loads_server_config(
 
 
 @patch("server.main.uvicorn.run")
+@patch("server.main.load_raw_config_from_project_root")
 @patch("server.main.Settings.load_from_project_root")
 def test_main_camera_loads_public_server_config(
-    mock_load_settings: MagicMock, mock_run: MagicMock
+    mock_load_settings: MagicMock, mock_load_raw: MagicMock, mock_run: MagicMock
 ) -> None:
     """Test that main_camera uses public_server config from settings."""
     # Create mock settings
@@ -111,6 +128,7 @@ def test_main_camera_loads_public_server_config(
     mock_settings.public_server.port = 8080
     mock_settings.public_server.debug = False
     mock_load_settings.return_value = mock_settings
+    mock_load_raw.return_value = {}
 
     main_camera()
 
@@ -126,9 +144,10 @@ def test_main_camera_loads_public_server_config(
 
 
 @patch("server.main.uvicorn.run")
+@patch("server.main.load_raw_config_from_project_root")
 @patch("server.main.Settings.load_from_project_root")
 def test_main_camera_uses_debug_log_level_when_enabled(
-    mock_load_settings: MagicMock, mock_run: MagicMock
+    mock_load_settings: MagicMock, mock_load_raw: MagicMock, mock_run: MagicMock
 ) -> None:
     """Test that main_camera uses debug log level when debug is enabled."""
     mock_settings = MagicMock()
@@ -136,6 +155,7 @@ def test_main_camera_uses_debug_log_level_when_enabled(
     mock_settings.public_server.port = 8000
     mock_settings.public_server.debug = True
     mock_load_settings.return_value = mock_settings
+    mock_load_raw.return_value = {}
 
     main_camera()
 

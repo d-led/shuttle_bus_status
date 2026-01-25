@@ -85,9 +85,9 @@ def test_configure_from_settings() -> None:
 
     # Mock settings object
     class MockLoggingSettings:
+        log_plates = "file"
         log_file = "logs/test.log"
         log_level = "DEBUG"
-        log_to_console = True
 
     class MockSettings:
         logging = MockLoggingSettings()
@@ -103,6 +103,29 @@ def test_configure_from_settings() -> None:
 
         # Verify log file was created
         assert log_file.exists()
+
+
+def test_configure_from_settings_can_disable_file_logging() -> None:
+    """Test disabling file logging for privacy (even if a log_file is configured)."""
+
+    class MockLoggingSettings:
+        log_plates = "no"
+        log_file = "logs/should_not_be_written.log"
+        log_level = "INFO"
+
+    class MockSettings:
+        logging = MockLoggingSettings()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        log_file = Path(tmpdir) / "should_not_be_written.log"
+        settings = MockSettings()
+        settings.logging.log_file = str(log_file)
+
+        configure_from_settings(settings)
+        logger = get_logger("test")
+        logger.info("privacy test", test=True)
+
+        assert not log_file.exists()
 
 
 def test_logger_context() -> None:

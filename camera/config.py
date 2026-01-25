@@ -1,6 +1,7 @@
 """Configuration management for camera plate detection."""
 
 import glob
+import sys
 from pathlib import Path
 from typing import Literal
 
@@ -113,6 +114,10 @@ class DebouncingSettings(BaseSettings):
 class LoggingSettings(BaseSettings):
     """Logging configuration."""
 
+    log_plates: Literal["file", "no", "console"] = Field(
+        default="file",
+        description="Where to log plate events (privacy-sensitive): file | console | no",
+    )
     log_file: str = Field(
         default="logs/plates.log",
         description="Log file path (relative to project root or absolute)",
@@ -121,9 +126,9 @@ class LoggingSettings(BaseSettings):
         default="INFO",
         description="Log level",
     )
+    # Kept for backwards compatibility with older config/tests; `log_plates` is preferred.
     log_to_console: bool = Field(
-        default=True,
-        description="Whether to also log to stdout",
+        default=True, description="Whether to also log to stdout"
     )
 
 
@@ -182,7 +187,17 @@ class Settings(BaseSettings):
 
     @staticmethod
     def _auto_detect_camera() -> str:
-        """Auto-detect the first available video device."""
+        """Auto-detect the first available camera device.
+
+        - **Linux/Raspberry Pi**: returns a V4L2 device path like `/dev/video0`
+        - **macOS**: returns an AVFoundation device selector like `avfoundation:0`
+          (usable by ffmpeg and OpenCV's AVFoundation backend)
+        """
+        if sys.platform == "darwin":
+            # On macOS there is no /dev/video*. Use AVFoundation device index.
+            # For demos, we default to `0` (usually the built-in camera).
+            return "avfoundation:0"
+
         video_devices = sorted(glob.glob("/dev/video*"))
         if not video_devices:
             raise RuntimeError(

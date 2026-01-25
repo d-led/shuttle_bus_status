@@ -46,6 +46,9 @@ appearance_window = 2.0
 disappearance_timeout = 5.0
 
 [logging]
+# Where to log plate events (privacy-sensitive): "file" | "console" | "no"
+log_plates = "file"
+
 # Log file path (relative to project root or absolute)
 log_file = "logs/plates.log"
 
