@@ -342,12 +342,25 @@ try:
     # Try to access the public dataset
     try:
         project = rf.workspace("max-mustermann-gmm7j").project("german-license-plates-hptbz")
-        # Try version 1 first, if that fails try latest version
+        # Get latest version (version 7 has the most images: 1243)
+        # Try to get the latest version number, or just download latest
         try:
-            dataset = project.version(1).download("yolov8", location=sys.argv[1] if len(sys.argv) > 1 else ".")
-        except:
-            # If version 1 doesn't exist, try downloading without specifying version (gets latest)
-            dataset = project.download("yolov8", location=sys.argv[1] if len(sys.argv) > 1 else ".")
+            versions = project.list_versions()
+            if versions and len(versions) > 0:
+                # Get the version with the most images (usually the latest)
+                latest_version = max(versions, key=lambda v: v.get('images', 0))
+                version_num = latest_version['id'].split('/')[-1]
+                dataset = project.version(int(version_num)).download("yolov8", location=sys.argv[1] if len(sys.argv) > 1 else ".")
+            else:
+                # Fallback: try version 7 (latest based on test)
+                dataset = project.version(7).download("yolov8", location=sys.argv[1] if len(sys.argv) > 1 else ".")
+        except Exception as ve:
+            # If version detection fails, try downloading latest without version number
+            try:
+                dataset = project.download("yolov8", location=sys.argv[1] if len(sys.argv) > 1 else ".")
+            except:
+                # Last resort: try version 7
+                dataset = project.version(7).download("yolov8", location=sys.argv[1] if len(sys.argv) > 1 else ".")
         print("SUCCESS")
     except Exception as e:
         print(f"API_ERROR: {e}")
