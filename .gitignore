@@ -287,3 +287,11 @@ pyrightconfig.json
 # End of https://www.toptal.com/developers/gitignore/api/python,visualstudiocode,pycharm+all
 
 **/complexity_report.json
+
+# Test datasets and downloaded images
+data/
+*.jpg
+*.jpeg
+*.png
+!docs/**/*.png
+!docs/**/*.jpg
