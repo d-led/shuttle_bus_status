@@ -496,10 +496,13 @@ EOF
         return 1
     fi
     
-    # Verify credentials are valid
-    if ! kaggle datasets list --max-size 1 &> /dev/null; then
-        echo "⚠️  Kaggle credentials appear invalid. Please check your credentials"
-        return 1
+    # Verify credentials are valid (but don't fail silently)
+    echo "Verifying Kaggle credentials..."
+    if kaggle datasets list --max-size 1 &> /dev/null; then
+        echo "✓ Kaggle credentials validated"
+    else
+        echo "⚠️  Kaggle credentials validation failed, but attempting download anyway..."
+        echo "   (This might work if the dataset is public)"
     fi
     
     echo "Downloading European License Plates Dataset from Kaggle..."
