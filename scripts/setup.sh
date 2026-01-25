@@ -45,36 +45,67 @@ if [[ "$IS_CI" == "true" ]]; then
     echo "Running in CI mode"
 fi
 
+# Hard requirement: the camera ML dependencies (Ultralytics -> PyTorch) need 64-bit Linux wheels.
+# Raspberry Pi 3 can run either 32-bit (armv7l) or 64-bit (aarch64) OS. We require a 64-bit OS.
+if [[ "$OS_TYPE" == "raspberrypi" ]]; then
+    MACHINE="$(uname -m)"
+    if [[ "$MACHINE" != "aarch64" ]]; then
+        echo ""
+        echo "Error: Raspberry Pi detected, but OS architecture is '$MACHINE'."
+        echo "This project requires a 64-bit Raspberry Pi OS (aarch64) to install ML dependencies (PyTorch/Ultralytics) on Python 3.13."
+        echo ""
+        echo "Fix:"
+        echo "  - Install a 64-bit Raspberry Pi OS image, or"
+        echo "  - Switch the project to a Python/ML stack that supports 32-bit armv7l."
+        exit 1
+    fi
+fi
+
 # Install system dependencies
 if [[ "$OS_TYPE" == "raspberrypi" ]] || [[ "$OS_TYPE" == "linux" ]]; then
     echo ""
     echo "Installing system dependencies..."
-    # In CI, we have sudo available, so install dependencies
-    # For local Raspberry Pi, also install
-    if command -v sudo &> /dev/null; then
-        # Test if sudo works (in CI it will, on local RPi user may need password)
-        if sudo -n true 2>/dev/null || [[ "$IS_CI" == "true" ]]; then
-            sudo apt-get update
-            sudo apt-get install -y \
-                python3-dev \
-                python3-pip \
-                python3-venv \
-                build-essential \
-                cmake \
-                pkg-config \
-                libjpeg-dev \
-                libpng-dev \
-                libtiff-dev \
-                libv4l-dev \
-                v4l-utils
-            echo "✓ System dependencies installed"
-        else
-            echo "⚠️  sudo requires password. Please install system dependencies manually:"
-            echo "   sudo apt-get install -y python3-dev python3-pip python3-venv build-essential cmake pkg-config libjpeg-dev libpng-dev libtiff-dev libv4l-dev v4l-utils"
+    required_apt_packages=(
+        python3-dev
+        python3-pip
+        python3-venv
+        build-essential
+        cmake
+        pkg-config
+        libjpeg-dev
+        libpng-dev
+        libtiff-dev
+        libv4l-dev
+        v4l-utils
+    )
+
+    missing_apt_packages=()
+    for pkg in "${required_apt_packages[@]}"; do
+        if ! dpkg -s "$pkg" >/dev/null 2>&1; then
+            missing_apt_packages+=("$pkg")
         fi
+    done
+
+    if [ "${#missing_apt_packages[@]}" -eq 0 ]; then
+        echo "✓ System dependencies already installed"
     else
-        echo "⚠️  sudo not available. Please install system dependencies manually:"
-        echo "   sudo apt-get install -y python3-dev python3-pip python3-venv build-essential cmake pkg-config libjpeg-dev libpng-dev libtiff-dev libv4l-utils"
+        echo "Missing system dependencies: ${missing_apt_packages[*]}"
+        # In CI, we have sudo available, so install dependencies
+        # For local Raspberry Pi, also install
+        if command -v sudo &> /dev/null; then
+            # Test if sudo works (in CI it will, on local RPi user may need password)
+            if sudo -n true 2>/dev/null || [[ "$IS_CI" == "true" ]]; then
+                sudo apt-get update
+                sudo apt-get install -y "${missing_apt_packages[@]}"
+                echo "✓ System dependencies installed"
+            else
+                echo "⚠️  sudo requires password. Please install system dependencies manually:"
+                echo "   sudo apt-get install -y ${missing_apt_packages[*]}"
+            fi
+        else
+            echo "⚠️  sudo not available. Please install system dependencies manually:"
+            echo "   sudo apt-get install -y ${missing_apt_packages[*]}"
+        fi
     fi
 elif [[ "$OS_TYPE" == "macos" ]]; then
     echo ""
@@ -109,13 +140,18 @@ if command -v uv &> /dev/null; then
     # Always use unsafe-best-match to check all indexes
     # This ensures piwheels (ARM-only) doesn't cause issues on macOS/x86_64
     # On Raspberry Pi, piwheels will still be used as fallback when needed
-    uv sync --dev --index-strategy unsafe-best-match || uv pip install -e ".[dev]" || python -m pip install -e ".[dev]"
+    # Use the repo root virtualenv (activated above) for this project too.
+    # Fail fast: if uv sync fails, don't silently fall back to a different resolver.
+    # Don't prune other packages in the shared repo-root venv.
+    uv sync --active --dev --inexact --index-strategy unsafe-best-match
     echo "✓ Camera dependencies installed"
     
     # Install server package
     cd "$PROJECT_ROOT/server"
     # Always use unsafe-best-match to check all indexes
-    uv sync --dev --index-strategy unsafe-best-match || uv pip install -e ".[dev]" || python -m pip install -e ".[dev]"
+    # IMPORTANT: do not run `uv sync` here, it would "sync away" camera-only deps
+    # from the shared repo-root virtualenv. We only need to add server deps.
+    uv pip install --python "$VENV_DIR/bin/python" -e ".[dev]" --index-strategy unsafe-best-match
     echo "✓ Server dependencies installed"
     cd "$PROJECT_ROOT"
 else

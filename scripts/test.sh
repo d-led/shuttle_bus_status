@@ -75,7 +75,7 @@ echo ""
 
 # Reformat code with Black first
 echo "Reformatting with Black..."
-run_python_module black camera server/src tests 2>/dev/null || true
+run_python_module black camera server/src tests
 echo "✓ Black formatting complete"
 echo ""
 
@@ -86,22 +86,22 @@ echo ""
 
 # 1. Check code formatting with Black
 echo "1. Checking code formatting with Black..."
-run_python_module black --check camera server/src tests 2>/dev/null || echo "⚠ Black check skipped (not installed)"
+run_python_module black --check camera server/src tests
 echo "✓ Formatting check passed"
 echo ""
 
 # 2. Lint with Ruff
 echo "2. Linting with Ruff..."
-run_python_module ruff check camera server/src tests 2>/dev/null || echo "⚠ Ruff check skipped (not installed)"
+run_python_module ruff check camera server/src tests
 echo "✓ Linting passed"
 echo ""
 
 # 3. Type check with mypy
 echo "3. Type checking with mypy..."
-run_python_module mypy camera 2>/dev/null || echo "⚠ Mypy check skipped (not installed)"
+run_python_module mypy --config-file camera/pyproject.toml camera
 if [ -d "server/src/server" ]; then
     export PYTHONPATH="${PROJECT_ROOT}/server/src:${PYTHONPATH:-}"
-    run_python_module mypy server/src/server 2>/dev/null || echo "⚠ Server mypy check skipped"
+    run_python_module mypy --config-file server/pyproject.toml server/src/server
 fi
 echo "✓ Type checking passed"
 echo ""
@@ -116,13 +116,11 @@ if python -c "import radon" 2>/dev/null || python3 -c "import radon" 2>/dev/null
         fi
         echo ""
         echo "Checking for dead code with vulture..."
-        if run_python_module vulture camera --min-confidence 80 2>/dev/null; then
-            echo "✓ No dead code found in camera"
-        fi
+        run_python_module vulture camera --min-confidence 80 --exclude "camera/.venv,**/.venv/**,**/site-packages/**"
+        echo "✓ No dead code found in camera"
         if [ -d "server/src/server" ]; then
-            if run_python_module vulture server/src/server --min-confidence 80 2>/dev/null; then
-                echo "✓ No dead code found in server"
-            fi
+            run_python_module vulture server/src/server --min-confidence 80 --exclude "**/.venv/**,**/site-packages/**"
+            echo "✓ No dead code found in server"
         fi
         echo "✓ Complexity analysis complete"
     else

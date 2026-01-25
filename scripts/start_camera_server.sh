@@ -24,7 +24,7 @@ if ! python -c "from server.main import main_camera" 2>/dev/null; then
     echo "⚠️  Server package not installed. Installing..."
     cd server
     if command -v uv &> /dev/null; then
-        uv sync --dev --index-strategy unsafe-best-match || uv pip install -e ".[dev]" || python -m pip install -e ".[dev]"
+        uv pip install --python "$VENV_DIR/bin/python" -e ".[dev]" --index-strategy unsafe-best-match
     else
         python -m pip install -e ".[dev]"
     fi

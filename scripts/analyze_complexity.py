@@ -509,8 +509,21 @@ def analyze_file(file_path: Path, protocol_signatures: dict[str, set[str]] | Non
 def find_python_files(root_dir: Path) -> Iterator[Path]:
     """Find all Python files in the source directory."""
     for path in root_dir.rglob("*.py"):
-        # Skip __pycache__ and test files for now (can be included later)
-        if "__pycache__" not in str(path) and "test_" not in path.name:
+        parts = set(path.parts)
+        # Skip virtualenvs, caches, and third-party code
+        if (
+            ".venv" in parts
+            or "venv" in parts
+            or "__pycache__" in parts
+            or ".pytest_cache" in parts
+            or ".tox" in parts
+            or "site-packages" in parts
+        ):
+            continue
+        # Skip test files for now (can be included later)
+        if "test_" in path.name:
+            continue
+        if "__pycache__" not in str(path):
             yield path
 
 

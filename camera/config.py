@@ -7,7 +7,7 @@ from typing import Literal
 try:
     import tomllib  # Python 3.11+
 except ImportError:
-    import tomli as tomllib  # type: ignore[import-not-found,no-redef]  # Python < 3.11
+    import tomli as tomllib  # type: ignore[no-redef]  # Python < 3.11
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict

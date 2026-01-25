@@ -1,5 +1,7 @@
 """Camera server LiveView for Raspberry Pi."""
 
+from typing import Any
+
 from pyview import LiveView
 
 
@@ -188,7 +190,7 @@ def app_frame(title: str, content: str) -> str:
 class CameraLiveView(LiveView):
     """Camera monitoring LiveView for Raspberry Pi."""
 
-    async def mount(self, _session, _params):
+    async def mount(self, _session: Any, _params: Any) -> dict[str, Any]:
         """Initialize the live view state."""
         return {
             "title": "Shuttle Bus Status",
@@ -198,7 +200,7 @@ class CameraLiveView(LiveView):
             "last_update": None,
         }
 
-    async def render(self, state):
+    async def render(self, state: dict[str, Any]) -> str:
         """Render the camera monitoring page."""
         status_text = "Ready" if state.get("status") == "ready" else "Initializing..."
         camera_status = (

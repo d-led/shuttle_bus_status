@@ -28,17 +28,32 @@ if [[ "$OS_TYPE" == "raspberrypi" ]] || [[ "$OS_TYPE" == "linux" ]] || [[ "$OS_T
     else
         echo "Installing system dependencies (Linux/Raspberry Pi)..."
     fi
-    # In CI, Python is usually pre-installed by actions/setup-python, but we verify
-    # and install any missing dependencies. For server, we mainly need Python and pip.
-    if command -v sudo &> /dev/null; then
-        sudo apt-get update
-        sudo apt-get install -y python3 python3-pip python3-venv || true
+    required_apt_packages=(
+        python3
+        python3-pip
+        python3-venv
+    )
+
+    missing_apt_packages=()
+    for pkg in "${required_apt_packages[@]}"; do
+        if ! dpkg -s "$pkg" >/dev/null 2>&1; then
+            missing_apt_packages+=("$pkg")
+        fi
+    done
+
+    if [ "${#missing_apt_packages[@]}" -eq 0 ]; then
+        echo "✓ System dependencies already installed"
     else
-        # In CI, we might not need sudo (running as root or with permissions)
-        apt-get update || true
-        apt-get install -y python3 python3-pip python3-venv || true
+        echo "Missing system dependencies: ${missing_apt_packages[*]}"
+        if command -v sudo &> /dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y "${missing_apt_packages[@]}"
+        else
+            apt-get update
+            apt-get install -y "${missing_apt_packages[@]}"
+        fi
+        echo "✓ System dependencies installed"
     fi
-    echo "✓ System dependencies installed/verified"
 elif [[ "$OS_TYPE" == "macos" ]]; then
     echo ""
     echo "Installing system dependencies (macOS)..."
@@ -95,7 +110,10 @@ if command -v uv &> /dev/null; then
     # Always use unsafe-best-match to check all indexes
     # This ensures piwheels (ARM-only) doesn't cause issues on macOS/x86_64
     # On Raspberry Pi, piwheels will still be used as fallback when needed
-    uv sync --dev --index-strategy unsafe-best-match || uv pip install -e ".[dev]" || python -m pip install -e ".[dev]"
+    # Use the repo root virtualenv (activated above) for this project too.
+    # Fail fast: if uv sync fails, don't silently fall back to a different resolver.
+    # Install into the repo-root venv without pruning unrelated packages.
+    uv pip install --python "$VENV_DIR/bin/python" -e ".[dev]" --index-strategy unsafe-best-match
     echo "✓ Dependencies installed with uv"
     cd "$PROJECT_ROOT"
 else

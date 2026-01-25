@@ -106,6 +106,20 @@ markers = [
 # PyPI should have aarch64 wheels for most packages
 # In CI (x86_64), we use --index-strategy unsafe-best-match to check all indexes
 # since piwheels may have older package versions
+#
+# Ensure the lockfile works across our supported platforms.
+# Otherwise, uv may lock against piwheels' Linux ARM artifacts and fail on macOS.
+required-environments = [
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sys_platform == 'linux' and platform_machine == 'aarch64'",
+]
+
+# Primary index
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+
 [[tool.uv.index]]
 name = "piwheels"
 url = "https://www.piwheels.org/simple"

@@ -1,5 +1,7 @@
 """Main entry point for the server."""
 
+from typing import Any
+
 import uvicorn
 from pyview import LiveView
 from starlette.applications import Starlette
@@ -12,11 +14,11 @@ from server.config import Settings
 class IndexLiveView(LiveView):
     """Main index page live view."""
 
-    async def mount(self, _session, _params):
+    async def mount(self, _session: Any, _params: Any) -> dict[str, Any]:
         """Initialize the live view."""
         return {"title": "Shuttle Bus Status"}
 
-    async def render(self, state):
+    async def render(self, state: dict[str, Any]) -> str:
         """Render the page."""
         return f"""
         <!DOCTYPE html>

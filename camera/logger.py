@@ -4,10 +4,11 @@ import logging
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import structlog
 from structlog.types import EventDict, Processor
+from structlog.typing import FilteringBoundLogger
 
 
 def add_rfc3339_timestamp(
@@ -147,7 +148,7 @@ def setup_logging(
     )
 
 
-def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
+def get_logger(name: str | None = None) -> FilteringBoundLogger:
     """Get a structured logger instance.
 
     Args:
@@ -156,7 +157,8 @@ def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
     Returns:
         Configured structlog logger
     """
-    return structlog.get_logger(name)
+    # structlog.get_logger is typed as Any; cast to the public protocol type.
+    return cast("FilteringBoundLogger", structlog.get_logger(name))
 
 
 def configure_from_settings(settings: Any) -> None:
