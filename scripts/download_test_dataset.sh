@@ -312,13 +312,32 @@ import sys
 try:
     from roboflow import Roboflow
     
-    # Public dataset - no API key needed for public datasets
-    # But we'll try without API key first
-    try:
-        rf = Roboflow()
-    except:
-        # If that fails, try with empty key (some public datasets work this way)
-        rf = Roboflow(api_key="")
+    # Roboflow requires an API key even for public datasets
+    # Check for API key in environment variable or config
+    api_key = os.environ.get("ROBOFLOW_API_KEY", "")
+    
+    if not api_key:
+        # Try to read from config file if it exists
+        config_path = os.path.expanduser("~/.roboflow/config")
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, 'r') as f:
+                    for line in f:
+                        if line.startswith("api_key"):
+                        api_key = line.split("=", 1)[1].strip().strip('"').strip("'")
+                        break
+            except:
+                pass
+    
+    if not api_key:
+        print("NO_API_KEY")
+        print("Roboflow requires an API key even for public datasets.")
+        print("Get your API key from: https://app.roboflow.com/")
+        print("Then set: export ROBOFLOW_API_KEY='your-api-key'")
+        sys.exit(1)
+    
+    # Initialize Roboflow with API key
+    rf = Roboflow(api_key=api_key)
     
     # Try to access the public dataset
     try:
@@ -327,13 +346,17 @@ try:
         print("SUCCESS")
     except Exception as e:
         print(f"API_ERROR: {e}")
-        print("Trying alternative method...")
-        # Alternative: direct download URL (if available)
-        raise
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
 except ImportError:
     print("ROBOFLOW_NOT_INSTALLED")
+    sys.exit(1)
 except Exception as e:
     print(f"ERROR: {e}")
+    import traceback
+    traceback.print_exc()
+    sys.exit(1)
 PYEOF
 
         cd "${roboflow_dir}"
@@ -344,12 +367,21 @@ PYEOF
             rm -f "${download_script}"
             cd "${PROJECT_ROOT}"
             return 0
+        elif echo "$result" | grep -q "NO_API_KEY"; then
+            echo ""
+            echo "⚠️  Roboflow API key required"
+            echo "   Roboflow requires an API key even for public datasets."
+            echo "   Get your API key from: https://app.roboflow.com/"
+            echo "   Then set: export ROBOFLOW_API_KEY='your-api-key'"
+            echo "   Or download manually from:"
         elif echo "$result" | grep -q "ROBOFLOW_NOT_INSTALLED"; then
             echo "⚠️  Roboflow Python package not installed"
             echo "   Install with: pip install roboflow"
             echo "   Or download manually from:"
         else
-            echo "⚠️  Roboflow API download failed, trying manual method..."
+            echo "⚠️  Roboflow API download failed:"
+            echo "$result" | grep -E "ERROR|API_ERROR" | head -3
+            echo "   Trying manual method..."
         fi
         rm -f "${download_script}"
         cd "${PROJECT_ROOT}"
