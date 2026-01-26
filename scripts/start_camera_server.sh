@@ -15,20 +15,15 @@ source "$SCRIPT_DIR/common_env.sh"
 
 # Check if virtual environment was activated
 if [[ "$VIRTUAL_ENV_ACTIVATED" != "true" ]]; then
-    echo "⚠️  Virtual environment not found. Please run scripts/setup_server.sh first"
+    echo "⚠️  Virtual environment not found. Please run scripts/setup.sh first"
     exit 1
 fi
 
 # Check if server package is installed
 if ! python -c "from server.main import main_camera" 2>/dev/null; then
-    echo "⚠️  Server package not installed. Installing..."
-    cd server
-    if command -v uv &> /dev/null; then
-        uv pip install --python "$VENV_DIR/bin/python" -e ".[dev]" --index-strategy unsafe-best-match
-    else
-        python -m pip install -e ".[dev]"
-    fi
-    cd "$PROJECT_ROOT"
+    echo "❌ Server package not installed in the active virtual environment."
+    echo "Run: scripts/setup.sh"
+    exit 1
 fi
 
 # Start the camera server

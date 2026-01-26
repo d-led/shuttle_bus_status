@@ -36,15 +36,12 @@ fi
 IS_CI="${CI:-false}"
 if [[ "$IS_CI" == "true" ]] || [[ -n "${GITHUB_ACTIONS:-}" ]]; then
     IS_CI=true
-    VENV_DIR="$PROJECT_ROOT/.venv"
 else
     IS_CI=false
-    if [[ "$OS_TYPE" == "raspberrypi" ]]; then
-        VENV_DIR="$HOME/camera-venv"
-    else
-        VENV_DIR="$PROJECT_ROOT/.venv"
-    fi
 fi
+
+# Single source of truth: always use repo-root `.venv` everywhere.
+VENV_DIR="$PROJECT_ROOT/.venv"
 
 echo "Detected environment: $OS_TYPE"
 if [[ "$IS_CI" == "true" ]]; then
@@ -124,14 +121,7 @@ elif [[ "$OS_TYPE" == "macos" ]]; then
     fi
 fi
 
-# Create virtual environment
-echo ""
-echo "Creating virtual environment at: $VENV_DIR"
-if [ ! -d "$VENV_DIR" ]; then
-    python3 -m venv "$VENV_DIR"
-fi
-
-# Activate virtual environment
+# Activate virtual environment (created by setup_venv above)
 source "$VENV_DIR/bin/activate"
 
 # Install Python dependencies
@@ -206,10 +196,5 @@ fi
 
 echo ""
 echo "Setup complete!"
-if [[ "$OS_TYPE" == "raspberrypi" ]]; then
-    echo "To activate the virtual environment, run:"
-    echo "  source ~/camera-venv/bin/activate"
-else
-    echo "To activate the virtual environment, run:"
-    echo "  source $VENV_DIR/bin/activate"
-fi
+echo "To activate the virtual environment, run:"
+echo "  source $VENV_DIR/bin/activate"

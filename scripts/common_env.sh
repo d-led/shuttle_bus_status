@@ -48,23 +48,8 @@ if [ -z "${PROJECT_ROOT:-}" ] || [ ! -f "${PROJECT_ROOT}/config.toml" ]; then
 fi
 
 # Determine virtual environment location
-if [[ "$OS_TYPE" == "raspberrypi" ]]; then
-    # Raspberry Pi: prefer server-venv, fallback to camera-venv
-    if [ -d "$HOME/server-venv" ]; then
-        VENV_DIR="$HOME/server-venv"
-    elif [ -d "$HOME/camera-venv" ]; then
-        VENV_DIR="$HOME/camera-venv"
-    else
-        VENV_DIR="$HOME/camera-venv"  # Default for RPi
-    fi
-else
-    # macOS, Linux, CI: use .venv in project root
-    VENV_DIR="$PROJECT_ROOT/.venv"
-    # Also check for camera/.venv as fallback
-    if [ ! -d "$VENV_DIR" ] && [ -d "$PROJECT_ROOT/camera/.venv" ]; then
-        VENV_DIR="$PROJECT_ROOT/camera/.venv"
-    fi
-fi
+# Single source of truth: always use repo-root `.venv` everywhere.
+VENV_DIR="$PROJECT_ROOT/.venv"
 
 # Activate virtual environment if it exists
 # Check multiple possible locations
@@ -74,11 +59,6 @@ if [ -d "$VENV_DIR" ] && [ -f "$VENV_DIR/bin/activate" ]; then
 elif [ -d "$PROJECT_ROOT/.venv" ] && [ -f "$PROJECT_ROOT/.venv/bin/activate" ]; then
     # Fallback: try project root .venv directly
     VENV_DIR="$PROJECT_ROOT/.venv"
-    source "$VENV_DIR/bin/activate"
-    export VIRTUAL_ENV_ACTIVATED=true
-elif [ -d "$PROJECT_ROOT/camera/.venv" ] && [ -f "$PROJECT_ROOT/camera/.venv/bin/activate" ]; then
-    # Fallback: try camera/.venv
-    VENV_DIR="$PROJECT_ROOT/camera/.venv"
     source "$VENV_DIR/bin/activate"
     export VIRTUAL_ENV_ACTIVATED=true
 else
