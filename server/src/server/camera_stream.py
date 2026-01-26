@@ -74,22 +74,31 @@ def list_camera_device_candidates() -> list[str]:
     - Linux/RPi: prefer V4L2 devices that look like actual cameras (via v4l2-ctl names).
     """
     if sys.platform == "darwin":
-        names = _avfoundation_device_names_from_ffmpeg()
-        if names:
-            return [f"avfoundation:{i}" for i in sorted(names.keys())]
+        return _darwin_camera_device_candidates()
+    return _linux_camera_device_candidates()
+
+
+def _darwin_camera_device_candidates() -> list[str]:
+    names = _avfoundation_device_names_from_ffmpeg()
+    if not names:
         return [f"avfoundation:{i}" for i in range(5)]
+    return [f"avfoundation:{i}" for i in sorted(names)]
 
+
+def _linux_camera_device_candidates() -> list[str]:
     names_by_path = _v4l2_device_names_from_v4l2ctl()
-    if names_by_path:
-        camera_like = [
-            dev
-            for dev, name in sorted(names_by_path.items())
-            if _looks_like_camera_device(name)
-        ]
-        if camera_like:
-            return camera_like
+    camera_like = _camera_like_v4l2_devices(names_by_path)
+    return camera_like or sorted(glob.glob("/dev/video*"))
 
-    return sorted(glob.glob("/dev/video*"))
+
+def _camera_like_v4l2_devices(names_by_path: dict[str, str]) -> list[str]:
+    if not names_by_path:
+        return []
+    return [
+        dev
+        for dev, name in sorted(names_by_path.items())
+        if _looks_like_camera_device(name)
+    ]
 
 
 def _looks_like_camera_device(name: str) -> bool:
@@ -381,6 +390,10 @@ class CameraStreamController(CameraStreamControllerProtocol):
         if self._config.capture_fps is not None:
             cap.set(cv2.CAP_PROP_FPS, float(self._config.capture_fps))
 
+        # Best-effort: keep the capture buffer small to reduce "stale frames" when sampling.
+        # Not all backends support this property, but it's safe to try.
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1.0)
+
         self._cap = cap
 
     def _close_capture(self) -> None:
@@ -395,8 +408,8 @@ class CameraStreamController(CameraStreamControllerProtocol):
         if self._cap is None:
             return None
 
-        ok, frame = self._cap.read()
-        if not ok or frame is None:
+        frame = _read_latest_frame(self._cap, flush_count=5)
+        if frame is None:
             logger.debug("Camera read() returned no frame")
             return None
 
@@ -417,6 +430,26 @@ class CameraStreamController(CameraStreamControllerProtocol):
         socket.context["camera_connected"] = frame_b64 is not None
         if frame_b64 is not None:
             socket.context["camera_frame_b64"] = frame_b64
+
+
+def _read_latest_frame(cap: Any, *, flush_count: int) -> Any | None:
+    """Read the most recent frame, discarding buffered frames.
+
+    When the camera captures at a higher FPS than our polling interval, OpenCV may
+    return an old buffered frame. We call `grab()` a few times to advance to the
+    latest frame and then `retrieve()` it.
+    """
+    for _ in range(max(int(flush_count), 0)):
+        ok = cap.grab()
+        if not ok:
+            break
+
+    ok, frame = cap.retrieve()
+    if ok and frame is not None:
+        return frame
+
+    ok2, frame2 = cap.read()
+    return frame2 if ok2 and frame2 is not None else None
 
 
 def _append_feedback(

@@ -92,7 +92,14 @@ def _stringify_config_value(value: object) -> str:
 
 
 def _build_config_rows(raw_config: dict[str, Any]) -> list[ConfigTableRow]:
-    sections: list[tuple[str, str]] = [
+    rows: list[ConfigTableRow] = []
+    for section_key, section_label in _config_sections():
+        rows.extend(_rows_from_config_section(raw_config, section_key, section_label))
+    return rows
+
+
+def _config_sections() -> list[tuple[str, str]]:
+    return [
         ("camera", "Camera"),
         ("plate_detection", "Plate detection"),
         ("plate_recognition", "Plate recognition"),
@@ -100,25 +107,23 @@ def _build_config_rows(raw_config: dict[str, Any]) -> list[ConfigTableRow]:
         ("logging", "Logging"),
     ]
 
-    rows: list[ConfigTableRow] = []
-    for section_key, section_label in sections:
-        section_value = raw_config.get(section_key, {})
-        if not isinstance(section_value, dict):
-            continue
 
-        for key, value in sorted(section_value.items(), key=lambda kv: str(kv[0])):
-            display_key = str(key)
-            if section_key == "camera" and display_key == "fps":
-                display_key = "capture_fps"
-            rows.append(
-                ConfigTableRow(
-                    section=section_label,
-                    key=display_key,
-                    value=_stringify_config_value(value),
-                )
-            )
+def _rows_from_config_section(
+    raw_config: dict[str, Any], section_key: str, section_label: str
+) -> list[ConfigTableRow]:
+    section_value = raw_config.get(section_key)
+    if not isinstance(section_value, dict):
+        return []
 
-    return rows
+    items = sorted(section_value.items(), key=lambda kv: str(kv[0]))
+    return [
+        ConfigTableRow(
+            section=section_label,
+            key=str(key),
+            value=_stringify_config_value(value),
+        )
+        for key, value in items
+    ]
 
 
 def _group_config_rows(
