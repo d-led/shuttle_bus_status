@@ -10,26 +10,22 @@ authors = [{ name = "Dmitry Ledentsov" }]
 # This repo is a mono-repo. We model it as a small "meta" package that depends on
 # the two real local packages.
 dependencies = [
-    "camera-plate-detection @ file:camera",
-    "shuttle-bus-status-server @ file:server",
+    "camera-plate-detection>=0.0.1,<0.1.0",
+    "shuttle-bus-status-server>=0.0.1,<0.1.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "camera-plate-detection[dev] @ file:camera",
-    "shuttle-bus-status-server[dev] @ file:server",
+    "camera-plate-detection[dev]>=0.0.1,<0.1.0",
+    "shuttle-bus-status-server[dev]>=0.0.1,<0.1.0",
 ]
 dataset = [
-    "camera-plate-detection[dataset] @ file:camera",
+    "camera-plate-detection[dataset]>=0.0.1,<0.1.0",
 ]
 
 [build-system]
 requires = ["hatchling>=1.21.0"]
 build-backend = "hatchling.build"
-
-[tool.hatch.metadata]
-# We intentionally depend on local workspace packages via `@ file:...`.
-allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/shuttle_bus_status"]
@@ -52,4 +48,8 @@ url = "https://pypi.org/simple"
 name = "piwheels"
 url = "https://www.piwheels.org/simple"
 # Not setting explicit=true allows piwheels to be used as fallback on ARM Linux automatically
+
+[tool.uv.sources]
+camera-plate-detection = { path = "camera" }
+shuttle-bus-status-server = { path = "server" }
 

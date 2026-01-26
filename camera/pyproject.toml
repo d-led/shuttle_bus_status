@@ -42,7 +42,6 @@ dev = [
 ]
 dataset = [
     "roboflow>=1.1.0",
-    "kaggle>=1.6.0",
 ]
 
 [project.scripts]

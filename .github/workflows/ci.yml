@@ -32,7 +32,12 @@ jobs:
           version: "latest"
           enable-cache: true
           cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
             camera/pyproject.toml
+            camera/uv.lock
+            server/pyproject.toml
+            server/uv.lock
 
       - name: Setup project (installs system dependencies and Python packages)
         run: |

@@ -142,7 +142,10 @@ else
     echo "Using pip for package management..."
     python -m pip install --upgrade pip setuptools wheel
     
-    # Single source of truth: repo-root pyproject.toml.
+    # Without uv, pip can't resolve `tool.uv.sources`. Install local packages explicitly first.
+    python -m pip install -e "camera[dev]"
+    python -m pip install -e "server[dev]"
+    # Keep the meta package installed too (small, but convenient for `pip list` / tooling).
     python -m pip install -e ".[dev]"
     echo "✓ Dependencies installed with pip"
 fi
