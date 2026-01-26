@@ -24,8 +24,12 @@ dataset = [
 ]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.21.0"]
 build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+# We intentionally depend on local workspace packages via `@ file:...`.
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/shuttle_bus_status"]
