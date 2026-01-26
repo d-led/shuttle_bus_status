@@ -6,14 +6,13 @@ set -euo pipefail
 # Usage: ./scripts/download_test_dataset.sh [output_directory]
 #
 # QUICK START (Easiest option):
-#   1. Install Roboflow: pip install roboflow
-#   2. Run this script - it will try to download automatically
+#   1. Run this script (it bootstraps what it needs)
 #   OR manually download from:
 #      https://universe.roboflow.com/max-mustermann-gmm7j/german-license-plates-hptbz
 #      Extract to: data/test_images/german_plates/roboflow/
 #
 # ALTERNATIVE (Largest dataset):
-#   1. Install Kaggle: pip install kaggle
+#   1. Run this script (it can install the Kaggle CLI into an isolated tooling venv)
 #   2. Get API key from https://www.kaggle.com/settings
 #   3. Save to ~/.kaggle/kaggle.json and chmod 600 it
 #   4. Run this script - it will download automatically
@@ -29,8 +28,12 @@ echo "German License Plate Dataset Downloader"
 echo "=========================================="
 echo "Output directory: ${DATASET_DIR}"
 echo ""
-echo "Recommended: Install 'roboflow' for automatic download"
-echo "  pip install roboflow"
+echo "This script keeps dataset tooling isolated from your project .venv."
+echo ""
+echo "Credentials (recommended for automated downloads):"
+echo "  export KAGGLE_API_TOKEN='username:key'"
+echo "  export ROBOFLOW_API_KEY='your-workspace-api-key'"
+echo ""
 echo ""
 
 # Create output directory
@@ -57,6 +60,24 @@ else
     echo "⚠️  Python3 not found. Some download methods may not work."
 fi
 
+echo ""
+echo "Credential status:"
+if [ -f "${HOME}/.kaggle/kaggle.json" ]; then
+    echo "  ✓ Kaggle: ~/.kaggle/kaggle.json found"
+elif [ -n "${KAGGLE_API_TOKEN:-}" ]; then
+    echo "  ✓ Kaggle: KAGGLE_API_TOKEN set (will generate ~/.kaggle/kaggle.json if needed)"
+else
+    echo "  ⚠ Kaggle: missing (set KAGGLE_API_TOKEN or create ~/.kaggle/kaggle.json)"
+fi
+
+if [ -n "${ROBOFLOW_API_KEY:-}" ]; then
+    echo "  ✓ Roboflow: ROBOFLOW_API_KEY set"
+elif [ -f "${HOME}/.roboflow/config" ]; then
+    echo "  ✓ Roboflow: ~/.roboflow/config found (script will try to read api_key)"
+else
+    echo "  ⚠ Roboflow: missing (set ROBOFLOW_API_KEY)"
+fi
+
 # Function to download from URL
 download_file() {
     local url="$1"
@@ -73,6 +94,54 @@ download_file() {
         return 1
     fi
     echo "✓ Downloaded: ${output_file}"
+}
+
+have_uv() { command -v uv &> /dev/null; }
+
+TOOLS_VENV="${PROJECT_ROOT}/.venv-tools"
+
+ensure_tools_venv() {
+    if [ -x "${TOOLS_VENV}/bin/python" ]; then
+        return 0
+    fi
+
+    if ! command -v python3 &> /dev/null; then
+        echo "Error: python3 not found. Cannot bootstrap dataset tooling." >&2
+        return 1
+    fi
+
+    echo "Bootstrapping isolated tooling venv at ${TOOLS_VENV}..."
+    python3 -m venv "${TOOLS_VENV}"
+    "${TOOLS_VENV}/bin/python" -m pip install --upgrade pip >/dev/null
+    echo "✓ Tooling venv ready"
+}
+
+ensure_tool_package() {
+    local package="$1"
+    ensure_tools_venv || return 1
+    "${TOOLS_VENV}/bin/python" -m pip install --upgrade "${package}" >/dev/null
+}
+
+run_kaggle() {
+    if have_uv; then
+        uv tool install kaggle >/dev/null 2>&1 || true
+        uv tool run kaggle "$@"
+        return $?
+    fi
+
+    ensure_tool_package kaggle || return 1
+    "${TOOLS_VENV}/bin/kaggle" "$@"
+}
+
+run_roboflow_downloader() {
+    local target_dir="$1"
+    if have_uv; then
+        uv tool run --with roboflow python "${SCRIPT_DIR}/download_roboflow.py" "${target_dir}"
+        return $?
+    fi
+
+    ensure_tool_package roboflow || return 1
+    "${TOOLS_VENV}/bin/python" "${SCRIPT_DIR}/download_roboflow.py" "${target_dir}"
 }
 
 # Function to extract archive
@@ -211,14 +280,17 @@ This directory contains test images for German license plate detection and recog
    - 1,200 images for object detection
    - License: Public Domain
    - Download: Visit the link and click "Download Dataset" button
-   - Or use Roboflow API with API key (see script output for instructions)
+   - Or use Roboflow API with API key:
+     - `export ROBOFLOW_API_KEY='your-workspace-api-key'`
 
 2. **Kaggle: European License Plates Dataset** (Largest - Requires Account)
    - Dataset: https://www.kaggle.com/datasets/abdelhamidzakaria/european-license-plates-dataset
    - Includes German and other European license plates
    - Requires Kaggle account and API setup
-   - Install: `pip install kaggle`
-   - Download: `kaggle datasets download -d abdelhamidzakaria/european-license-plates-dataset`
+   - Script will install Kaggle CLI into an isolated tooling env
+   - Credentials:
+     - `export KAGGLE_API_TOKEN='username:key'` (or create `~/.kaggle/kaggle.json`)
+   - Manual download (if you already have Kaggle CLI): `kaggle datasets download -d abdelhamidzakaria/european-license-plates-dataset`
    - This downloads actual image files
 
 3. **THI License Plate Dataset (TLPD)** (Academic - Requires Contact)
@@ -286,52 +358,28 @@ download_roboflow() {
     echo "Method 3: Attempting to download from Roboflow..."
     echo "Dataset: German License Plates (1.2k images, Public Domain)"
     
-    # Try to install roboflow if not available
-    if ! python3 -c "import roboflow" 2>/dev/null; then
-        echo "Installing roboflow package..."
-        if python3 -m pip install --quiet roboflow 2>/dev/null; then
-            echo "✓ roboflow installed"
-        else
-            echo "⚠️  Failed to install roboflow automatically"
-            echo "   Try manually: pip install roboflow"
-            echo "   Or download manually from: https://universe.roboflow.com/max-mustermann-gmm7j/german-license-plates-hptbz"
-            return 1
-        fi
-    fi
-    
-    # Try to use Roboflow Python API
-    if python3 -c "import roboflow" 2>/dev/null; then
-        echo "Roboflow Python package found. Attempting download..."
-        
-        cd "${roboflow_dir}"
-        local result=$(python3 "${SCRIPT_DIR}/download_roboflow.py" "${roboflow_dir}" 2>&1)
-        
-        if echo "$result" | grep -q "SUCCESS"; then
-            echo "✓ Roboflow dataset downloaded successfully"
-            cd "${PROJECT_ROOT}"
-            return 0
-        elif echo "$result" | grep -q "NO_API_KEY"; then
-            echo ""
-            echo "⚠️  Roboflow API key required"
-            echo "   Roboflow requires an API key even for public datasets."
-            echo "   Get your API key from: https://app.roboflow.com/"
-            echo "   Then set: export ROBOFLOW_API_KEY='your-api-key'"
-            echo "   Or download manually from:"
-        elif echo "$result" | grep -q "ROBOFLOW_NOT_INSTALLED"; then
-            echo "⚠️  Roboflow Python package not installed"
-            echo "   Install with: pip install roboflow"
-            echo "   Or download manually from:"
-        else
-            echo "⚠️  Roboflow API download failed:"
-            echo "$result" | grep -E "ERROR|API_ERROR" | head -3
-            echo "   Trying manual method..."
-        fi
+    echo "Attempting Roboflow API download via an isolated tool environment..."
+    cd "${roboflow_dir}"
+    local result
+    result="$(run_roboflow_downloader "${roboflow_dir}" 2>&1 || true)"
+
+    if echo "$result" | grep -q "SUCCESS"; then
+        echo "✓ Roboflow dataset downloaded successfully"
         cd "${PROJECT_ROOT}"
+        return 0
+    elif echo "$result" | grep -q "NO_API_KEY"; then
+        echo ""
+        echo "⚠️  Roboflow API key required"
+        echo "   Roboflow requires an API key even for public datasets."
+        echo "   Get your API key from: https://app.roboflow.com/"
+        echo "   Then set: export ROBOFLOW_API_KEY='your-api-key'"
+        echo "   Or download manually from:"
     else
-        echo "⚠️  Roboflow Python package not installed"
-        echo "   Install with: pip install roboflow"
-        echo "   Or download manually:"
+        echo "⚠️  Roboflow API download failed:"
+        echo "$result" | grep -E "ERROR|API_ERROR" | head -3 || true
+        echo "   Trying manual method..."
     fi
+    cd "${PROJECT_ROOT}"
     
     # Fallback: Manual download instructions
     echo ""
@@ -365,19 +413,7 @@ download_kaggle() {
     echo "Method 4: Attempting to download from Kaggle..."
     echo "Dataset: European License Plates (includes German plates)"
     
-    # Try to install kaggle if not available
-    if ! command -v kaggle &> /dev/null; then
-        if ! python3 -c "import kaggle" 2>/dev/null; then
-            echo "Installing kaggle package..."
-            if python3 -m pip install --quiet kaggle 2>/dev/null; then
-                echo "✓ kaggle installed"
-            else
-                echo "⚠️  Failed to install kaggle automatically"
-                echo "   Try manually: pip install kaggle"
-                return 1
-            fi
-        fi
-    fi
+    echo "Ensuring Kaggle CLI is available (without touching your project .venv)..."
     
     # Check if kaggle credentials are set (either JSON file or environment variable)
     HAS_CREDENTIALS=false
@@ -426,7 +462,7 @@ EOF
     
     # Verify credentials are valid (but don't fail silently)
     echo "Verifying Kaggle credentials..."
-    if kaggle datasets list --max-size 1 &> /dev/null; then
+    if run_kaggle datasets list --max-size 1 &> /dev/null; then
         echo "✓ Kaggle credentials validated"
     else
         echo "⚠️  Kaggle credentials validation failed, but attempting download anyway..."
@@ -437,7 +473,7 @@ EOF
     cd "${kaggle_dir}"
     
     # European License Plates Dataset (includes German plates)
-    if kaggle datasets download -d abdelhamidzakaria/european-license-plates-dataset -p . --unzip 2>&1; then
+    if run_kaggle datasets download -d abdelhamidzakaria/european-license-plates-dataset -p . --unzip 2>&1; then
         echo "✓ Kaggle dataset downloaded and extracted"
         cd "${PROJECT_ROOT}"
         return 0
@@ -518,8 +554,7 @@ if [ "${IMAGE_COUNT}" -gt 0 ]; then
     fi
 else
     echo "⚠️  No images found. You may need to:"
-    echo "   1. Install roboflow: pip install roboflow (then run script again)"
-    echo "   2. Manually download from: https://universe.roboflow.com/max-mustermann-gmm7j/german-license-plates-hptbz"
+    echo "   1. Manually download from: https://universe.roboflow.com/max-mustermann-gmm7j/german-license-plates-hptbz"
     echo "   3. Set up Kaggle API (see instructions above)"
     echo "   4. Add custom download URLs to ${DATASET_DIR}/public_samples/download_samples.sh"
     echo "   5. Use scripts/take-one-photo.sh to capture your own test images"

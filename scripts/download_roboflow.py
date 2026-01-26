@@ -7,6 +7,9 @@ To download manually:
 3. Look for "Download" or "Export" button in the version page
 4. Select format: YOLOv8
 5. Download and extract to the target directory
+
+To download via this script (recommended, without polluting your project venv):
+  scripts/download_test_dataset.sh
 """
 
 import os
@@ -124,6 +127,9 @@ try:
         sys.exit(1)
 except ImportError:
     print("ROBOFLOW_NOT_INSTALLED")
+    print("")
+    print("Recommended: run the wrapper script (bootstraps an isolated tooling env):")
+    print("  scripts/download_test_dataset.sh")
     sys.exit(1)
 except Exception as e:
     print(f"ERROR: {e}")
