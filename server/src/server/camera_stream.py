@@ -13,6 +13,10 @@ import asyncio
 import base64
 import contextlib
 import glob
+import logging
+import re
+import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
@@ -21,6 +25,8 @@ from pyview.events import InfoEvent
 
 if TYPE_CHECKING:
     from pyview.live_socket import ConnectedLiveViewSocket
+
+logger = logging.getLogger("uvicorn.error")
 
 
 class CameraStreamControllerProtocol(Protocol):
@@ -32,14 +38,16 @@ class CameraStreamControllerProtocol(Protocol):
         self, socket: ConnectedLiveViewSocket[dict[str, object]]
     ) -> None: ...
 
+    async def set_device(self, device: str) -> None: ...
+
 
 @dataclass(frozen=True)
 class CameraStreamConfig:
     device: str
     width: int | None
     height: int | None
-    fps: int | None
-    max_fps: float
+    capture_fps: int | None
+    poll_interval_s: float
 
 
 def resolve_device(raw_camera_device: str) -> str:
@@ -56,6 +64,132 @@ def resolve_device(raw_camera_device: str) -> str:
     return "/dev/video0"
 
 
+def list_camera_device_candidates() -> list[str]:
+    """List camera device candidates without probing hardware.
+
+    This is intentionally conservative to avoid triggering camera permission prompts.
+    - macOS: show a small range of AVFoundation indices.
+    - Linux/RPi: show existing V4L2 devices.
+    """
+    if sys.platform == "darwin":
+        return [f"avfoundation:{i}" for i in range(5)]
+    return sorted(glob.glob("/dev/video*"))
+
+
+def list_camera_device_candidates_with_names() -> list[tuple[str, str | None]]:
+    """Return (device_selector, friendly_name) pairs without probing devices.
+
+    On macOS we try to get names via ffmpeg's AVFoundation device listing.
+    On Linux we try to get names via v4l2-ctl.
+    Falls back to just selectors if tools are missing.
+    """
+    candidates = list_camera_device_candidates()
+    if not candidates:
+        return []
+
+    if sys.platform == "darwin":
+        names = _avfoundation_device_names_from_ffmpeg()
+        result: list[tuple[str, str | None]] = []
+        for sel in candidates:
+            idx = _parse_avfoundation_index(sel)
+            result.append((sel, names.get(idx) if idx is not None else None))
+        return result
+
+    # Linux/RPi
+    names_by_path = _v4l2_device_names_from_v4l2ctl()
+    return [(sel, names_by_path.get(sel)) for sel in candidates]
+
+
+def format_camera_device_options_for_ui() -> list[dict[str, str]]:
+    """Format camera device options for templates (value + label)."""
+    options: list[dict[str, str]] = []
+
+    resolved_auto = resolve_device("auto")
+    auto_label = f"auto (→ {resolved_auto})"
+    if sys.platform == "darwin":
+        names = dict(list_camera_device_candidates_with_names())
+        name = names.get(resolved_auto)
+        if name:
+            auto_label = f"auto (→ {resolved_auto} — {name})"
+    options.append({"value": "auto", "label": auto_label})
+
+    for value, name in list_camera_device_candidates_with_names():
+        label = f"{value} — {name}" if name else value
+        options.append({"value": value, "label": label})
+    return options
+
+
+def _parse_avfoundation_index(selector: str) -> int | None:
+    if not selector.startswith("avfoundation:"):
+        return None
+    raw = selector.split(":", 1)[1]
+    return int(raw) if raw.isdigit() else None
+
+
+def _avfoundation_device_names_from_ffmpeg() -> dict[int, str]:
+    if shutil.which("ffmpeg") is None:
+        return {}
+
+    # ffmpeg prints device lists to stderr.
+    proc = subprocess.run(
+        ["ffmpeg", "-f", "avfoundation", "-list_devices", "true", "-i", ""],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    text_out = (proc.stderr or "") + "\n" + (proc.stdout or "")
+
+    in_video_section = False
+    names: dict[int, str] = {}
+    for line in text_out.splitlines():
+        if "AVFoundation video devices" in line:
+            in_video_section = True
+            continue
+        if "AVFoundation audio devices" in line:
+            in_video_section = False
+            continue
+        if not in_video_section:
+            continue
+
+        m = re.search(r"\[\s*(\d+)\s*\]\s+(.+)$", line.strip())
+        if not m:
+            continue
+        idx = int(m.group(1))
+        name = m.group(2).strip()
+        if name:
+            names[idx] = name
+    return names
+
+
+def _v4l2_device_names_from_v4l2ctl() -> dict[str, str]:
+    if shutil.which("v4l2-ctl") is None:
+        return {}
+
+    proc = subprocess.run(
+        ["v4l2-ctl", "--list-devices"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    out = proc.stdout or ""
+    current_name: str | None = None
+    mapping: dict[str, str] = {}
+    for raw_line in out.splitlines():
+        line = raw_line.rstrip()
+        if not line.strip():
+            continue
+        if not line.startswith((" ", "\t")):
+            # Device header line (usually ends with ':')
+            current_name = line.rstrip(":").strip()
+            continue
+        if current_name is None:
+            continue
+        dev = line.strip()
+        if dev.startswith("/dev/video"):
+            mapping[dev] = current_name
+    return mapping
+
+
 class NullCameraStreamController(CameraStreamControllerProtocol):
     async def register(
         self, _socket: ConnectedLiveViewSocket[dict[str, object]]
@@ -65,6 +199,9 @@ class NullCameraStreamController(CameraStreamControllerProtocol):
     async def unregister(
         self, _socket: ConnectedLiveViewSocket[dict[str, object]]
     ) -> None:
+        return
+
+    async def set_device(self, _device: str) -> None:
         return
 
 
@@ -85,6 +222,9 @@ class CameraStreamController(CameraStreamControllerProtocol):
         async with self._lock:
             self._sockets.add(socket)
             if self._task is None or self._task.done():
+                logger.info(
+                    "Starting camera sampler task (clients=%d)", len(self._sockets)
+                )
                 self._task = asyncio.create_task(self._run(), name="camera-stream")
 
     async def unregister(
@@ -93,7 +233,31 @@ class CameraStreamController(CameraStreamControllerProtocol):
         async with self._lock:
             self._sockets.discard(socket)
             if not self._sockets:
+                logger.info("Stopping camera sampler task (no clients)")
                 await self._stop_locked()
+
+    async def set_device(self, device: str) -> None:
+        """Switch the active camera device.
+
+        This is intended for interactive selection when multiple cameras exist.
+        """
+        next_device = _normalize_device_selection(device)
+        async with self._lock:
+            if next_device == self._config.device:
+                return
+            logger.info(
+                "Switching camera device from %r to %r",
+                self._config.device,
+                next_device,
+            )
+            self._config = CameraStreamConfig(
+                device=next_device,
+                width=self._config.width,
+                height=self._config.height,
+                capture_fps=self._config.capture_fps,
+                poll_interval_s=self._config.poll_interval_s,
+            )
+            self._close_capture()
 
     async def _stop_locked(self) -> None:
         if self._task is not None and not self._task.done():
@@ -109,11 +273,13 @@ class CameraStreamController(CameraStreamControllerProtocol):
         except asyncio.CancelledError:
             self._close_capture()
             raise
-        except Exception:
-            await self._handle_stream_error()
+        except Exception as e:
+            await self._handle_stream_error(e)
 
-    async def _handle_stream_error(self) -> None:
+    async def _handle_stream_error(self, error: Exception) -> None:
         # Never crash the server due to streaming errors.
+        logger.error("Camera stream error", exc_info=error)
+        await self._broadcast_feedback(f"Camera stream error: {error!r}")
         self._close_capture()
         # Try again later if someone is still connected.
         await asyncio.sleep(1.0)
@@ -121,9 +287,14 @@ class CameraStreamController(CameraStreamControllerProtocol):
             if self._sockets:
                 self._task = asyncio.create_task(self._run(), name="camera-stream")
 
+    async def _broadcast_feedback(self, message: str) -> None:
+        sockets = await self._snapshot_sockets()
+        for sock in sockets:
+            _append_feedback(sock, message)
+
     async def _stream_loop(self) -> None:
         await self._open_capture()
-        interval = max(1.0 / float(self._config.max_fps), 0.05)
+        interval = max(float(self._config.poll_interval_s), 0.1)
         while await self._tick(interval):
             pass
 
@@ -132,6 +303,9 @@ class CameraStreamController(CameraStreamControllerProtocol):
         if not sockets:
             self._close_capture()
             return False
+
+        if self._cap is None:
+            await self._open_capture()
 
         frame_b64 = self._try_read_frame_b64()
         for sock in sockets:
@@ -153,18 +327,32 @@ class CameraStreamController(CameraStreamControllerProtocol):
         import cv2  # imported lazily
 
         device = self._config.device
+        logger.info("Opening camera device=%r", device)
         if device.startswith("avfoundation:"):
             idx = int(device.split(":", 1)[1])
             cap = cv2.VideoCapture(idx, cv2.CAP_AVFOUNDATION)
         else:
             cap = cv2.VideoCapture(device)
 
+        # Fail fast with a helpful message (otherwise reads just return False/None).
+        is_opened = getattr(cap, "isOpened", None)
+        if callable(is_opened) and not cap.isOpened():
+            hint = ""
+            if sys.platform == "darwin":
+                hint = (
+                    " On macOS, ensure the running process (e.g. Terminal/Cursor) "
+                    "has camera permission in System Settings > Privacy & Security > Camera."
+                )
+            message = f"OpenCV could not open camera device {device!r}.{hint}"
+            logger.warning(message)
+            raise RuntimeError(message)
+
         if self._config.width is not None:
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, float(self._config.width))
         if self._config.height is not None:
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self._config.height))
-        if self._config.fps is not None:
-            cap.set(cv2.CAP_PROP_FPS, float(self._config.fps))
+        if self._config.capture_fps is not None:
+            cap.set(cv2.CAP_PROP_FPS, float(self._config.capture_fps))
 
         self._cap = cap
 
@@ -184,10 +372,12 @@ class CameraStreamController(CameraStreamControllerProtocol):
 
         ok, frame = self._cap.read()
         if not ok or frame is None:
+            logger.debug("Camera read() returned no frame")
             return None
 
         ok2, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
         if not ok2:
+            logger.debug("JPEG encode failed")
             return None
         return base64.b64encode(buf.tobytes()).decode("ascii")
 
@@ -196,14 +386,12 @@ class CameraStreamController(CameraStreamControllerProtocol):
         socket: ConnectedLiveViewSocket[dict[str, object]], frame_b64: str | None
     ) -> None:
         # Keep state minimal: the UI can decide what to render.
-        if frame_b64 is None:
-            socket.context["camera_connected"] = False
-            _append_feedback(socket, "Camera stream: no frame available.")
-            return
-
-        socket.context["camera_connected"] = True
-        socket.context["camera_frame_b64"] = frame_b64
-        _append_feedback(socket, "Camera stream: frame updated.")
+        #
+        # IMPORTANT: do not spam the UI feedback window with camera status.
+        # Only errors are surfaced there (see `_handle_stream_error`).
+        socket.context["camera_connected"] = frame_b64 is not None
+        if frame_b64 is not None:
+            socket.context["camera_frame_b64"] = frame_b64
 
 
 def _append_feedback(
@@ -218,3 +406,10 @@ def _append_feedback(
     raw.append(message)
     if len(raw) > max_lines:
         del raw[:-max_lines]
+
+
+def _normalize_device_selection(raw: str) -> str:
+    selection = str(raw).strip()
+    if selection == "auto":
+        return resolve_device("auto")
+    return selection

@@ -13,6 +13,7 @@ Key points:
 from __future__ import annotations
 
 import glob
+import logging
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,7 +27,10 @@ from pyview.vendor.ibis.loaders import FileReloader
 from server.camera_stream import (
     CameraStreamControllerProtocol,
     NullCameraStreamController,
+    format_camera_device_options_for_ui,
 )
+
+logger = logging.getLogger("uvicorn.error")
 
 
 @dataclass(frozen=True)
@@ -42,6 +46,8 @@ class CameraLiveViewDependencies:
     config_rows: list[ConfigTableRow]
     feedback_lines: list[str]
     stream: CameraStreamControllerProtocol
+    camera_device: str
+    camera_device_options: list[dict[str, str]]
 
 
 @dataclass(frozen=True)
@@ -101,10 +107,13 @@ def _build_config_rows(raw_config: dict[str, Any]) -> list[ConfigTableRow]:
             continue
 
         for key, value in sorted(section_value.items(), key=lambda kv: str(kv[0])):
+            display_key = str(key)
+            if section_key == "camera" and display_key == "fps":
+                display_key = "capture_fps"
             rows.append(
                 ConfigTableRow(
                     section=section_label,
-                    key=str(key),
+                    key=display_key,
                     value=_stringify_config_value(value),
                 )
             )
@@ -144,8 +153,11 @@ def _build_feedback_lines(raw_config: dict[str, Any]) -> list[str]:
         f"logging.log_plates = {log_plates!r}",
     ]
 
+    lines.append(
+        f"Camera device selected: {_selected_camera_device_label(raw_config)!r}"
+    )
+
     if sys.platform == "darwin":
-        lines.append("macOS: demos use AVFoundation (e.g. avfoundation:0).")
         return lines
 
     # Linux/RPi: V4L2
@@ -158,6 +170,47 @@ def _build_feedback_lines(raw_config: dict[str, Any]) -> list[str]:
     if len(video_devices) > 5:
         lines.append(f"... and {len(video_devices) - 5} more")
     return lines
+
+
+def _camera_device_from_raw_config(raw_config: dict[str, Any]) -> str:
+    camera_cfg = raw_config.get("camera", {})
+    if not isinstance(camera_cfg, dict):
+        return "auto"
+    device = camera_cfg.get("device", "auto")
+    return str(device) if isinstance(device, str | int) else "auto"
+
+
+def _build_camera_device_options(raw_config: dict[str, Any]) -> list[dict[str, str]]:
+    options = format_camera_device_options_for_ui()
+    selected = _camera_device_from_raw_config(raw_config)
+    if (
+        selected
+        and selected != "auto"
+        and not any(o["value"] == selected for o in options)
+    ):
+        options.append({"value": selected, "label": selected})
+    return options
+
+
+def _camera_device_candidates_as_labels() -> list[str]:
+    opts = format_camera_device_options_for_ui()
+    # Keep it short: don't repeat the expanded "auto (→ ...)" entry.
+    labels = [o["label"] for o in opts if o["value"] != "auto"]
+    return ["auto", *labels]
+
+
+def _selected_camera_device_label(raw_config: dict[str, Any]) -> str:
+    selected = _camera_device_from_raw_config(raw_config)
+    options = _build_camera_device_options(raw_config)
+    for opt in options:
+        if opt.get("value") == selected:
+            return opt.get("label", selected)
+    if selected == "auto" and options:
+        # Prefer the enriched auto label (e.g. "auto (→ avfoundation:0 — ...)")
+        first = options[0]
+        if first.get("value") == "auto":
+            return first.get("label", "auto")
+    return selected
 
 
 class CameraLiveView(LiveView[dict[str, Any]]):
@@ -189,6 +242,18 @@ class CameraLiveView(LiveView[dict[str, Any]]):
         title = self._config.route_display.title or "Shuttle Bus Status"
         status = str(context.get("status", "ready"))
         camera_connected = bool(context.get("camera_connected", False))
+        feedback_lines = context.get("feedback_lines")
+        if not isinstance(feedback_lines, list):
+            feedback_lines = list(self._config.dependencies.feedback_lines)
+        config_sections = context.get("config_sections")
+        if not isinstance(config_sections, list):
+            config_sections = _group_config_rows(self._config.dependencies.config_rows)
+        camera_device = context.get("camera_device")
+        if not isinstance(camera_device, str):
+            camera_device = self._config.dependencies.camera_device
+        camera_device_options = context.get("camera_device_options")
+        if not isinstance(camera_device_options, list):
+            camera_device_options = self._config.dependencies.camera_device_options
 
         return {
             "title": title,
@@ -196,11 +261,11 @@ class CameraLiveView(LiveView[dict[str, Any]]):
             "camera_connected": camera_connected,
             "plates_detected": int(context.get("plates_detected", 0)),
             "camera_frame_b64": context.get("camera_frame_b64"),
+            "camera_device": camera_device,
+            "camera_device_options": camera_device_options,
             "server_bind": self._config.dependencies.server_bind,
-            "feedback_lines": list(self._config.dependencies.feedback_lines),
-            "config_sections": _group_config_rows(
-                self._config.dependencies.config_rows
-            ),
+            "feedback_lines": list(feedback_lines),
+            "config_sections": config_sections,
         }
 
     async def mount(self, socket: LiveViewSocket[dict[str, Any]], session: Any) -> None:
@@ -214,6 +279,10 @@ class CameraLiveView(LiveView[dict[str, Any]]):
             "plates_detected": 0,
             "server_bind": self._config.dependencies.server_bind,
             "feedback_lines": list(self._config.dependencies.feedback_lines),
+            "camera_device": self._config.dependencies.camera_device,
+            "camera_device_options": list(
+                self._config.dependencies.camera_device_options
+            ),
             "config_sections": _group_config_rows(
                 self._config.dependencies.config_rows
             ),
@@ -227,6 +296,31 @@ class CameraLiveView(LiveView[dict[str, Any]]):
     async def disconnect(self, socket: LiveViewSocket[dict[str, Any]]) -> None:
         if is_connected(socket):
             await self._config.dependencies.stream.unregister(socket)
+
+    async def handle_event(
+        self,
+        event: str,
+        payload: Any = None,
+        socket: LiveViewSocket[dict[str, Any]] | None = None,
+    ) -> None:
+        if event != "set_camera_device" or socket is None:
+            return
+
+        raw_device = _extract_device_from_payload(payload)
+        if not isinstance(raw_device, str):
+            return
+
+        logger.info("Camera device selection requested: %r", raw_device)
+        logger.debug("Camera device selection payload: %r", payload)
+
+        # Update UI state immediately.
+        socket.context["camera_device"] = raw_device
+        socket.context["camera_frame_b64"] = None
+        socket.context["camera_connected"] = False
+        socket.context = dict(socket.context)
+
+        if is_connected(socket):
+            await self._config.dependencies.stream.set_device(raw_device)
 
     async def render(self, assigns: dict[str, Any], meta: Any) -> str:
         template_assigns = self._build_template_assigns(assigns)
@@ -252,11 +346,15 @@ def build_camera_live_view_dependencies(
     rows = _build_config_rows(raw_config)
     # Put bind into config table (not in the page header).
     rows.append(ConfigTableRow(section="Server", key="bind", value=server_bind))
+    camera_device = _camera_device_from_raw_config(raw_config)
+    camera_device_options = _build_camera_device_options(raw_config)
     return CameraLiveViewDependencies(
         server_bind=server_bind,
         config_rows=rows,
         feedback_lines=_build_feedback_lines(raw_config),
         stream=stream or NullCameraStreamController(),
+        camera_device=camera_device,
+        camera_device_options=camera_device_options,
     )
 
 
@@ -275,3 +373,35 @@ def build_display_configuration(*, raw_config: dict[str, Any]) -> DisplayConfigu
     # Future: read UI config from TOML if we add it.
     _ = raw_config
     return DisplayConfiguration()
+
+
+def _extract_device_from_payload(payload: Any) -> str | None:
+    """Best-effort extraction of camera device from a LiveView change payload."""
+    if not isinstance(payload, dict):
+        return None
+
+    for data in _payload_dict_candidates(payload):
+        device = _device_from_dict(data)
+        if device is not None:
+            return device
+
+    return _single_string_value(payload)
+
+
+def _payload_dict_candidates(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = [payload]
+    for key in ("value", "values", "form", "data"):
+        nested = payload.get(key)
+        if isinstance(nested, dict):
+            candidates.append(nested)
+    return candidates
+
+
+def _device_from_dict(data: dict[str, Any]) -> str | None:
+    value = data.get("device")
+    return value if isinstance(value, str) else None
+
+
+def _single_string_value(data: dict[str, Any]) -> str | None:
+    values = [v for v in data.values() if isinstance(v, str)]
+    return values[0] if len(values) == 1 else None

@@ -23,6 +23,20 @@
               </td>
             </tr>
             <tr>
+              <td>Device</td>
+              <td class="text-right">
+                <select
+                  name="device"
+                  phx-change="set_camera_device"
+                  class="select select-xs select-bordered font-mono w-[14rem]"
+                >
+                  {% for opt in camera_device_options %}
+                    <option value="{{ opt.value }}" {% if opt.value == camera_device %}selected{% endif %}>{{ opt.label }}</option>
+                  {% endfor %}
+                </select>
+              </td>
+            </tr>
+            <tr>
               <td>Plates detected</td>
               <td class="text-right font-mono">{{ plates_detected }}</td>
             </tr>
@@ -47,28 +61,32 @@
     </div>
   </div>
 
-  <div class="grid grid-cols-1 lg:grid-cols-3 gap-3">
-    <div class="card bg-base-100 shadow-sm lg:col-span-2">
+  <div class="flex flex-col lg:flex-row gap-3 items-stretch">
+    <div class="card bg-base-100 shadow-sm w-full lg:w-auto lg:flex-none">
       <div class="card-body p-4">
         <div class="font-semibold text-base text-base-content/70">Camera feed</div>
         {% if camera_frame_b64 %}
-          <div class="mt-2 border border-base-content/10 rounded-xl overflow-hidden bg-base-200/40">
-            <img
-              src="data:image/jpeg;base64,{{ camera_frame_b64 }}"
-              class="w-full h-auto block"
-              alt="Camera frame"
-            />
+          <div class="mt-2 flex justify-center lg:justify-start">
+            <div class="border border-base-content/10 rounded-xl overflow-hidden bg-base-200/40 max-h-[360px] max-w-full w-fit">
+              <img
+                src="data:image/jpeg;base64,{{ camera_frame_b64 }}"
+                class="w-auto h-auto max-w-full max-h-[360px] object-contain block"
+                alt="Camera frame"
+              />
+            </div>
           </div>
         {% else %}
-          <div class="mt-2 border border-dashed border-base-content/20 rounded-xl p-8 text-center text-base-content/60">
-            <div class="text-3xl opacity-60">📹</div>
-            <div class="mt-1">Waiting for camera stream…</div>
+          <div class="mt-2 flex justify-center lg:justify-start">
+            <div class="border border-dashed border-base-content/20 rounded-xl p-6 text-center text-base-content/60 w-fit">
+              <div class="text-2xl opacity-60">📹</div>
+              <div class="mt-1">Waiting for camera sample…</div>
+            </div>
           </div>
         {% endif %}
       </div>
     </div>
 
-    <div class="card bg-base-100 shadow-sm">
+    <div class="card bg-base-100 shadow-sm flex-1 min-w-0">
       <div class="card-body p-4">
         <div class="font-semibold text-base text-base-content/70">Recent activity</div>
         <div class="mt-2 border border-dashed border-base-content/20 rounded-xl p-6 text-center text-base-content/60">

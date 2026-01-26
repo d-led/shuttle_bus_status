@@ -10,7 +10,7 @@ try:
 except ImportError:
     import tomli as tomllib  # type: ignore[no-redef]  # Python < 3.11
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,11 +29,26 @@ class CameraSettings(BaseSettings):
         default=1080,
         description="Camera resolution height in pixels, or 'auto' to use camera's default/native resolution",
     )
-    fps: int = Field(default=30, ge=1, le=60, description="Camera frame rate")
+    capture_fps: int = Field(
+        default=30,
+        ge=1,
+        le=60,
+        description="Requested camera capture FPS (not the sampling rate)",
+    )
     input_format: str = Field(
         default="",
         description="Input format (mjpeg, yuyv, etc.). Leave empty for auto-detection",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_fps_to_capture_fps(cls, data: object) -> object:
+        # Backwards compatibility: accept legacy `fps` key in config.toml
+        if isinstance(data, dict) and "capture_fps" not in data and "fps" in data:
+            migrated = dict(data)
+            migrated["capture_fps"] = migrated.pop("fps")
+            return migrated
+        return data
 
     @field_validator("width", mode="before")
     @classmethod
@@ -195,7 +210,6 @@ class Settings(BaseSettings):
         """
         if sys.platform == "darwin":
             # On macOS there is no /dev/video*. Use AVFoundation device index.
-            # For demos, we default to `0` (usually the built-in camera).
             return "avfoundation:0"
 
         video_devices = sorted(glob.glob("/dev/video*"))

@@ -17,6 +17,7 @@ from starlette.staticfiles import StaticFiles
 from server.camera_stream import (
     CameraStreamConfig,
     CameraStreamController,
+    format_camera_device_options_for_ui,
     resolve_device,
 )
 from server.camera_view import (
@@ -107,6 +108,8 @@ def create_camera_app(
     if raw_config is None:
         raw_config = load_raw_config_from_project_root()
 
+    _log_camera_devices(raw_config)
+
     stream = _build_camera_stream(raw_config)
     deps = build_camera_live_view_dependencies(
         raw_config=raw_config,
@@ -146,22 +149,67 @@ def create_camera_app(
     return app
 
 
-def _build_camera_stream(raw_config: dict[str, Any]) -> CameraStreamController:
+def _log_camera_devices(raw_config: dict[str, Any]) -> None:
+    import logging
+
     camera_cfg = raw_config.get("camera", {}) if isinstance(raw_config, dict) else {}
-    raw_device = (
+    configured = (
         camera_cfg.get("device", "auto") if isinstance(camera_cfg, dict) else "auto"
     )
-    width = camera_cfg.get("width") if isinstance(camera_cfg, dict) else None
-    height = camera_cfg.get("height") if isinstance(camera_cfg, dict) else None
-    fps = camera_cfg.get("fps") if isinstance(camera_cfg, dict) else None
+    configured_str = str(configured) if isinstance(configured, str | int) else "auto"
+    effective = resolve_device(configured_str)
+
+    opts = format_camera_device_options_for_ui()
+    selected_label = next(
+        (o["label"] for o in opts if o.get("value") == configured_str),
+        None,
+    )
+    logging.getLogger("uvicorn.error").info(
+        "Camera selection: configured=%r effective=%r%s",
+        configured_str,
+        effective,
+        f" ({selected_label})" if selected_label else "",
+    )
+
+    lines = [f'{o["value"]}: {o["label"]}' for o in opts]
+    logging.getLogger("uvicorn.error").debug("Camera devices:\n%s", "\n".join(lines))
+
+
+def _section(raw_config: dict[str, Any], key: str) -> dict[str, Any]:
+    value = raw_config.get(key, {})
+    return value if isinstance(value, dict) else {}
+
+
+def _get_int(section: dict[str, Any], key: str) -> int | None:
+    value = section.get(key)
+    return int(value) if isinstance(value, int) else None
+
+
+def _get_device(section: dict[str, Any]) -> str:
+    value = section.get("device", "auto")
+    return str(value) if isinstance(value, str | int) else "auto"
+
+
+def _get_poll_interval_s(section: dict[str, Any]) -> float:
+    value = section.get("poll_interval", 1.0)
+    return float(value) if isinstance(value, float | int) else 1.0
+
+
+def _build_camera_stream(raw_config: dict[str, Any]) -> CameraStreamController:
+    camera_cfg = _section(raw_config, "camera")
+    plate_detection_cfg = _section(raw_config, "plate_detection")
+    raw_device = _get_device(camera_cfg)
+    capture_fps = _get_int(camera_cfg, "capture_fps")
+    if capture_fps is None:
+        capture_fps = _get_int(camera_cfg, "fps")  # backwards compatibility
 
     return CameraStreamController(
         CameraStreamConfig(
             device=resolve_device(str(raw_device)),
-            width=int(width) if isinstance(width, int) else None,
-            height=int(height) if isinstance(height, int) else None,
-            fps=int(fps) if isinstance(fps, int) else None,
-            max_fps=2.0,  # keep Pi CPU low; increase later if needed
+            width=_get_int(camera_cfg, "width"),
+            height=_get_int(camera_cfg, "height"),
+            capture_fps=capture_fps,
+            poll_interval_s=_get_poll_interval_s(plate_detection_cfg),
         )
     )
 

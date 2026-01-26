@@ -11,8 +11,9 @@ device = "auto"
 width = 1920
 height = 1080
 
-# Camera frame rate (frames per second)
-fps = 30
+# Requested camera capture FPS (this is NOT the sampling rate).
+# Sampling rate is controlled by `plate_detection.poll_interval`.
+capture_fps = 30
 
 # Input format (mjpeg, yuyv, etc.). Leave empty for auto-detection
 input_format = ""

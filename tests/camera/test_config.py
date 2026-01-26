@@ -92,7 +92,7 @@ def test_auto_resolution(tmp_path: Path) -> None:
 device = "auto"
 width = "auto"
 height = "auto"
-fps = 30
+capture_fps = 30
 """)
 
     original_cwd = Path.cwd()
@@ -115,7 +115,7 @@ def test_mixed_resolution(tmp_path: Path) -> None:
 device = "auto"
 width = "auto"
 height = 720
-fps = 30
+capture_fps = 30
 """)
 
     original_cwd = Path.cwd()
@@ -137,10 +137,27 @@ def test_default_settings() -> None:
     assert settings.camera.device == "auto"
     assert settings.camera.width == 1920
     assert settings.camera.height == 1080
-    assert settings.camera.fps == 30
+    assert settings.camera.capture_fps == 30
     assert settings.plate_detection.model_size == "nano"
     assert settings.plate_detection.confidence_threshold == 0.5
     assert settings.debouncing.appearance_count == 3
     assert settings.debouncing.appearance_window == 2.0
     assert settings.debouncing.disappearance_timeout == 5.0
     assert settings.logging.log_plates == "file"
+
+
+def test_legacy_fps_is_migrated_to_capture_fps(tmp_path: Path) -> None:
+    config_file = tmp_path / "config.toml"
+    config_file.write_text("""
+[camera]
+fps = 25
+""")
+    original_cwd = Path.cwd()
+    try:
+        import os
+
+        os.chdir(tmp_path)
+        settings = Settings.load_from_project_root()
+        assert settings.camera.capture_fps == 25
+    finally:
+        os.chdir(original_cwd)

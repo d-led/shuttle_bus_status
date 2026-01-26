@@ -14,6 +14,20 @@ from server.camera_view import (
 )
 
 
+class _FakeStream:
+    def __init__(self) -> None:
+        self.last_device: str | None = None
+
+    async def register(self, _socket):  # type: ignore[no-untyped-def]
+        return
+
+    async def unregister(self, _socket):  # type: ignore[no-untyped-def]
+        return
+
+    async def set_device(self, device: str) -> None:
+        self.last_device = device
+
+
 @pytest.mark.asyncio
 async def test_camera_liveview_mount_sets_initial_context() -> None:
     deps = build_camera_live_view_dependencies(
@@ -44,6 +58,12 @@ async def test_camera_liveview_mount_sets_initial_context() -> None:
     assert socket.context["server_bind"] == "0.0.0.0:8000"
     assert isinstance(socket.context["feedback_lines"], list)
     assert isinstance(socket.context["config_sections"], list)
+    assert socket.context["camera_device"] == "auto"
+    assert isinstance(socket.context["camera_device_options"], list)
+    assert any(
+        isinstance(o, dict) and o.get("value") == "auto"
+        for o in socket.context["camera_device_options"]
+    )
 
 
 @pytest.mark.asyncio
@@ -107,6 +127,8 @@ def test_camera_template_renders_with_minimal_assigns() -> None:
             "camera_connected": False,
             "plates_detected": 0,
             "camera_frame_b64": None,
+            "camera_device": "auto",
+            "camera_device_options": [{"value": "auto", "label": "auto"}],
             "server_bind": "0.0.0.0:8000",
             "feedback_lines": [],
             "config_sections": [],
@@ -114,3 +136,28 @@ def test_camera_template_renders_with_minimal_assigns() -> None:
         PyViewMeta(socket=UnconnectedSocket()),
     )
     assert "Configuration" in html
+    assert "Device" in html
+
+
+@pytest.mark.asyncio
+async def test_camera_liveview_handle_event_switches_device() -> None:
+    stream = _FakeStream()
+    deps = build_camera_live_view_dependencies(
+        raw_config={"camera": {"device": "auto"}},
+        server_bind="0.0.0.0:8000",
+        stream=stream,  # type: ignore[arg-type]
+    )
+    lv_config = LiveViewConfiguration(
+        dependencies=deps,
+        route_display=RouteDisplaySettings(title="Shuttle Bus Status", theme="light"),
+        display_config=DisplayConfiguration(),
+    )
+    view = create_camera_live_view(lv_config)()
+    socket: UnconnectedSocket[dict[str, object]] = UnconnectedSocket()
+    await view.mount(socket, {})
+
+    await view.handle_event(
+        "set_camera_device", {"device": "avfoundation:1"}, socket=socket
+    )
+
+    assert socket.context["camera_device"] == "avfoundation:1"
