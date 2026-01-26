@@ -200,8 +200,6 @@ def _build_camera_stream(raw_config: dict[str, Any]) -> CameraStreamController:
     plate_detection_cfg = _section(raw_config, "plate_detection")
     raw_device = _get_device(camera_cfg)
     capture_fps = _get_int(camera_cfg, "capture_fps")
-    if capture_fps is None:
-        capture_fps = _get_int(camera_cfg, "fps")  # backwards compatibility
 
     return CameraStreamController(
         CameraStreamConfig(

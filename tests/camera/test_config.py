@@ -144,20 +144,3 @@ def test_default_settings() -> None:
     assert settings.debouncing.appearance_window == 2.0
     assert settings.debouncing.disappearance_timeout == 5.0
     assert settings.logging.log_plates == "file"
-
-
-def test_legacy_fps_is_migrated_to_capture_fps(tmp_path: Path) -> None:
-    config_file = tmp_path / "config.toml"
-    config_file.write_text("""
-[camera]
-fps = 25
-""")
-    original_cwd = Path.cwd()
-    try:
-        import os
-
-        os.chdir(tmp_path)
-        settings = Settings.load_from_project_root()
-        assert settings.camera.capture_fps == 25
-    finally:
-        os.chdir(original_cwd)

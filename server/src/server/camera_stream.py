@@ -21,6 +21,7 @@ import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
+import cv2
 from pyview.events import InfoEvent
 
 if TYPE_CHECKING:
@@ -68,12 +69,39 @@ def list_camera_device_candidates() -> list[str]:
     """List camera device candidates without probing hardware.
 
     This is intentionally conservative to avoid triggering camera permission prompts.
-    - macOS: show a small range of AVFoundation indices.
-    - Linux/RPi: show existing V4L2 devices.
+    - macOS: if available, use ffmpeg's AVFoundation device listing (names + indices).
+      Otherwise, show a small range of indices.
+    - Linux/RPi: prefer V4L2 devices that look like actual cameras (via v4l2-ctl names).
     """
     if sys.platform == "darwin":
+        names = _avfoundation_device_names_from_ffmpeg()
+        if names:
+            return [f"avfoundation:{i}" for i in sorted(names.keys())]
         return [f"avfoundation:{i}" for i in range(5)]
+
+    names_by_path = _v4l2_device_names_from_v4l2ctl()
+    if names_by_path:
+        camera_like = [
+            dev
+            for dev, name in sorted(names_by_path.items())
+            if _looks_like_camera_device(name)
+        ]
+        if camera_like:
+            return camera_like
+
     return sorted(glob.glob("/dev/video*"))
+
+
+def _looks_like_camera_device(name: str) -> bool:
+    lowered = name.lower()
+    # Keep things a bit permissive; we mainly want to hide codec/isp pseudo-devices.
+    if "codec" in lowered or "decode" in lowered:
+        return False
+    if "isp" in lowered:
+        return False
+    return (
+        "camera" in lowered or "uvc" in lowered or "usb" in lowered or "hd" in lowered
+    )
 
 
 def list_camera_device_candidates_with_names() -> list[tuple[str, str | None]]:
@@ -324,7 +352,6 @@ class CameraStreamController(CameraStreamControllerProtocol):
     async def _open_capture(self) -> None:
         if self._cap is not None:
             return
-        import cv2  # imported lazily
 
         device = self._config.device
         logger.info("Opening camera device=%r", device)
@@ -367,8 +394,6 @@ class CameraStreamController(CameraStreamControllerProtocol):
     def _try_read_frame_b64(self) -> str | None:
         if self._cap is None:
             return None
-
-        import cv2  # imported lazily
 
         ok, frame = self._cap.read()
         if not ok or frame is None:

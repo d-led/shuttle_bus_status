@@ -21,6 +21,7 @@ dependencies = [
     "uvicorn[standard]>=0.32.0",
     "pydantic>=2.11.0",
     "pydantic-settings>=2.6.0",
+    "opencv-python>=4.10.0,<5.0.0",
 ]
 
 [project.optional-dependencies]
@@ -73,6 +74,7 @@ warn_no_return = true
 
 [[tool.mypy.overrides]]
 module = [
+    "cv2.*",
     "pyview.*",
     "starlette.*",
     "uvicorn.*",
