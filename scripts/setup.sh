@@ -131,67 +131,20 @@ echo "Installing Python dependencies..."
 # Check if uv is available, use it if so (faster, especially in CI)
 if command -v uv &> /dev/null; then
     echo "Using uv for package management..."
-    # Install camera package
-    cd camera
-    # Always use unsafe-best-match to check all indexes
-    # This ensures piwheels (ARM-only) doesn't cause issues on macOS/x86_64
-    # On Raspberry Pi, piwheels will still be used as fallback when needed
-    # Use the repo root virtualenv (activated above) for this project too.
-    # Fail fast: if uv sync fails, don't silently fall back to a different resolver.
-    # Don't prune other packages in the shared repo-root venv.
+    # Single source of truth: repo-root pyproject.toml.
+    # It depends on both local packages (camera + server).
+    #
+    # - Use --dev to include tooling (pytest/mypy/ruff/black/etc.)
+    # - Use --inexact to avoid pruning in the shared repo-root venv.
     uv sync --active --dev --inexact --index-strategy unsafe-best-match
-    echo "✓ Camera dependencies installed"
-    
-    # Install server package
-    cd "$PROJECT_ROOT/server"
-    # Always use unsafe-best-match to check all indexes
-    # IMPORTANT: do not run `uv sync` here, it would "sync away" camera-only deps
-    # from the shared repo-root virtualenv. We only need to add server deps.
-    uv pip install --python "$VENV_DIR/bin/python" -e ".[dev]" --index-strategy unsafe-best-match
-    echo "✓ Server dependencies installed"
-    cd "$PROJECT_ROOT"
+    echo "✓ Dependencies installed"
 else
     echo "Using pip for package management..."
     python -m pip install --upgrade pip setuptools wheel
     
-    # Install camera package
-    cd camera
+    # Single source of truth: repo-root pyproject.toml.
     python -m pip install -e ".[dev]"
-    echo "✓ Camera dependencies installed with pip"
-    
-    # Install server package
-    cd "$PROJECT_ROOT/server"
-    python -m pip install -e ".[dev]"
-    echo "✓ Server dependencies installed with pip"
-    cd "$PROJECT_ROOT"
-fi
-
-# Verify installation
-echo ""
-echo "Verifying installation..."
-cd "$PROJECT_ROOT"
-if [ -d "$VENV_DIR" ]; then
-    source "$VENV_DIR/bin/activate"
-fi
-
-python -c "import numpy; print(f'✓ NumPy version: {numpy.__version__}')" || echo "⚠ NumPy not available"
-python -c "import structlog; print('✓ structlog installed')" || echo "⚠ structlog not installed"
-
-# OpenCV may not be available in CI without camera hardware
-if python -c "import cv2; print(f'✓ OpenCV version: {cv2.__version__}')" 2>/dev/null; then
-    :
-else
-    if [[ "$IS_CI" == "true" ]]; then
-        echo "⚠ OpenCV not available (expected in CI without camera)"
-    else
-        echo "⚠ OpenCV not available - camera functionality will be limited"
-    fi
-fi
-
-# Only check heavy ML dependencies if not in CI (they take time to install)
-if [[ "$IS_CI" != "true" ]]; then
-    python -c "import ultralytics; print('✓ Ultralytics installed')" 2>/dev/null || echo "⚠ Ultralytics not installed (may take time to download)"
-    python -c "import easyocr; print('✓ EasyOCR installed')" 2>/dev/null || echo "⚠ EasyOCR not installed (may take time to download)"
+    echo "✓ Dependencies installed with pip"
 fi
 
 echo ""

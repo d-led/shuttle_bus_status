@@ -19,13 +19,6 @@ if [[ "$VIRTUAL_ENV_ACTIVATED" != "true" ]]; then
     exit 1
 fi
 
-# Check if server package is installed
-if ! python -c "from server.main import main_camera" 2>/dev/null; then
-    echo "❌ Server package not installed in the active virtual environment."
-    echo "Run: scripts/setup.sh"
-    exit 1
-fi
-
 # Start the camera server
 echo "Starting camera server..."
 echo "Platform: $(uname -s) ($(uname -m))"
@@ -33,7 +26,4 @@ echo "Server will be available at: http://localhost:8000"
 echo "Press Ctrl+C to stop"
 echo ""
 
-# Set PYTHONPATH to include server/src
-export PYTHONPATH="$PROJECT_ROOT/server/src:$PYTHONPATH"
-
-exec python -c "from server.main import main_camera; main_camera()"
+exec shuttle-bus-status-camera-server
