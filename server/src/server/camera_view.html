@@ -16,10 +16,35 @@
         <table class="table mt-2">
           <tbody>
             <tr>
-              <td>Camera</td>
+              <td>Connections</td>
               <td class="text-right font-semibold">
-                <span class="inline-block w-2.5 h-2.5 rounded-full align-middle mr-2 {% if camera_connected %}bg-success{% else %}bg-error{% endif %}"></span>
-                {% if camera_connected %}Connected{% else %}Not Connected{% endif %}
+                <div class="flex justify-end items-center gap-4">
+                  <div class="flex items-center gap-2">
+                    <span class="inline-block w-2.5 h-2.5 rounded-full align-middle {% if camera_connected %}bg-success{% else %}bg-error{% endif %}"></span>
+                    <span class="text-base-content/70">Camera</span>
+                    <span class="font-mono">{% if camera_connected %}Connected{% else %}Not Connected{% endif %}</span>
+                  </div>
+
+                  <div id="server-connection-status" class="flex items-center gap-2" data-connection-state="connecting">
+                    <span id="server-connecting-icon" class="flex items-center gap-2">
+                      <span class="inline-block w-2.5 h-2.5 rounded-full bg-warning"></span>
+                      <span class="font-mono">Connecting</span>
+                    </span>
+                    <span id="server-connected-icon" class="flex items-center gap-2" style="display:none;">
+                      <span class="inline-block w-2.5 h-2.5 rounded-full bg-success"></span>
+                      <span class="font-mono">Connected</span>
+                    </span>
+                    <span id="server-unstable-icon" class="flex items-center gap-2" style="display:none;">
+                      <span class="inline-block w-2.5 h-2.5 rounded-full bg-warning"></span>
+                      <span class="font-mono">Unstable</span>
+                    </span>
+                    <span id="server-disconnected-icon" class="flex items-center gap-2" style="display:none;">
+                      <span class="inline-block w-2.5 h-2.5 rounded-full bg-error"></span>
+                      <span class="font-mono">Disconnected</span>
+                    </span>
+                    <span class="text-base-content/70">Server</span>
+                  </div>
+                </div>
               </td>
             </tr>
             <tr>
