@@ -12,6 +12,12 @@
 
 Only the **latest commit on `main`** is considered for any security-related fixes (if any are made). Older commits, forks, and downstream deployments are **not supported**.
 
+## Responsible use and liability
+
+This project may be used for camera capture and license plate detection. You are responsible for using it lawfully and ethically (including respecting privacy and applicable local regulations).
+
+**No liability**: the authors and contributors are not responsible for any misuse of this project or for any damages arising from its use. Use at your own risk. For the full terms, see `LICENSE`.
+
 ## Reporting a vulnerability
 
 Please **do not** open public GitHub issues or pull requests for security vulnerabilities.
