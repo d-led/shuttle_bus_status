@@ -9,6 +9,12 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 cd "$PROJECT_ROOT"
 
+# Source common setup functions
+. "${SCRIPT_DIR}/setup-common.sh"
+
+# Setup virtual environment
+setup_venv "$PROJECT_ROOT"
+
 # Detect environment
 OS_TYPE="unknown"
 if [[ "$OSTYPE" == "linux-gnu"* ]]; then
