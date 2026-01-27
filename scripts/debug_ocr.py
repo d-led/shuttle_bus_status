@@ -26,7 +26,7 @@ def main() -> int:
     # Extract plate region (from report: bbox x1=164, y1=180, x2=249, y2=200)
     crop = img[180:200, 164:249]
     print(f"Crop size: {crop.shape}")
-    print(f"Expected: 'LIP VE 351'")
+    print("Expected: 'LIP VE 351'")
     print()
 
     # Test with preprocessing disabled first
@@ -70,7 +70,7 @@ def main() -> int:
     print(f"Final result: {text} (conf={conf:.3f})")
     print(f"Strategy used: {meta.get('preprocessing_strategy_used', 'unknown')}")
     if meta.get("all_strategy_results"):
-        print(f"\nAll strategy results:")
+        print("\nAll strategy results:")
         for r in meta.get("all_strategy_results", []):
             print(f"  {r['strategy']}: {r['text']!r} (conf={r['conf']:.3f})")
 

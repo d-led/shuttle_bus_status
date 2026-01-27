@@ -11,7 +11,6 @@ import base64
 import contextlib
 import logging
 import random
-import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -19,8 +18,6 @@ import cv2
 from pyview.events import InfoEvent
 
 if TYPE_CHECKING:
-    import numpy as np
-
     from pyview.live_socket import ConnectedLiveViewSocket
 else:
     import numpy as np  # Runtime import needed for cv2 operations
@@ -51,8 +48,8 @@ class TestCameraDevice:
         """
         self._image_dir = Path(image_directory)
         # Convert to int cycles (round to nearest integer)
-        self._min_cycles = max(1, int(round(min_duration_s)))
-        self._max_cycles = max(self._min_cycles, int(round(max_duration_s)))
+        self._min_cycles = max(1, round(min_duration_s))
+        self._max_cycles = max(self._min_cycles, round(max_duration_s))
         self._target_width = width
         self._target_height = height
 
@@ -258,8 +255,9 @@ class TestCameraStreamController:
                 logger.info("Stopping test camera stream task (no clients)")
                 await self._stop_locked()
 
-    async def set_device(self, device: str) -> None:  # noqa: ARG002
+    async def set_device(self, device: str) -> None:
         """Set device (no-op for test device, but required by protocol)."""
+        del device
 
     async def _stop_locked(self) -> None:
         """Stop the stream task."""

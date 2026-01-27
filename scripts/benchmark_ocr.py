@@ -15,7 +15,6 @@ import time
 from pathlib import Path
 
 import cv2
-import numpy as np
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -272,9 +271,9 @@ def main() -> int:
         default=None,
     )
     if fastest_no_prep:
-        print(f"\nFor SPEED (no preprocessing):")
+        print("\nFor SPEED (no preprocessing):")
         print(f"  Use: {fastest_no_prep['engine']}")
-        print(f"  Config: preprocess = false")
+        print("  Config: preprocess = false")
         print(f"  Expected: {fastest_no_prep['avg_time_ms']:.1f}ms per image ({fastest_no_prep['fps']:.2f} FPS)")
     
     # Fastest with preprocessing
@@ -284,9 +283,9 @@ def main() -> int:
         default=None,
     )
     if fastest_with_prep:
-        print(f"\nFor ACCURACY (with preprocessing):")
+        print("\nFor ACCURACY (with preprocessing):")
         print(f"  Use: {fastest_with_prep['engine']}")
-        print(f"  Config: preprocess = true")
+        print("  Config: preprocess = true")
         print(f"  Expected: {fastest_with_prep['avg_time_ms']:.1f}ms per image ({fastest_with_prep['fps']:.2f} FPS)")
         print(f"  WARNING: {fastest_with_prep['avg_time_ms']/fastest_no_prep['avg_time_ms']:.1f}x slower than no preprocessing")
     

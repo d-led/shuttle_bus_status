@@ -114,15 +114,15 @@
     <div class="card bg-base-100 shadow-sm flex-1 min-w-0">
       <div class="card-body p-4">
         <div class="font-semibold text-base text-base-content/70">Recent activity</div>
-        {% if latest_detections and latest_detections|length > 0 %}
+        {% if latest_detections %}
           <div class="mt-2 space-y-2">
             {% for detection in latest_detections %}
               <div class="border border-base-content/10 rounded-lg p-3 bg-base-200/40">
                 <div class="flex items-center justify-between gap-2">
                   <div class="font-mono font-semibold text-lg">{{ detection.text or "Unknown" }}</div>
                   <div class="text-xs text-base-content/60">
-                    {% if detection.raw_ocr_confidence %}
-                      {{ "%.0f"|format(detection.raw_ocr_confidence * 100) }}%
+                    {% if detection.confidence_percent %}
+                      {{ detection.confidence_percent }}%
                     {% endif %}
                   </div>
                 </div>

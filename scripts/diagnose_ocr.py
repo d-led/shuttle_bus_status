@@ -13,7 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from camera.config import Settings
-from camera.plate_pipeline import BBox, PlateCandidate, create_plate_recognizer, detect_plates_from_candidates
+from camera.plate_pipeline import BBox, PlateCandidate, detect_plates_from_candidates
 
 
 def main() -> int:

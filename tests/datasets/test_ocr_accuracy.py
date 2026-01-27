@@ -92,7 +92,7 @@ def test_ocr_accuracy_with_ground_truth() -> None:
                 ocr=ocr,
                 include_crops=False,
             )
-        
+
         ocr_time = time.perf_counter() - ocr_start
 
         # Find best OCR result (highest confidence)
@@ -193,7 +193,9 @@ def test_ocr_accuracy_with_ground_truth() -> None:
     # Generate HTML report
     report_path = Path("reports/datasets/ocr_accuracy_report.html")
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    _write_accuracy_report_html(report_path, results, detection_times, yolo_times, ocr_times)
+    _write_accuracy_report_html(
+        report_path, results, detection_times, yolo_times, ocr_times
+    )
 
     # Calculate statistics
     total = len(results)
@@ -224,8 +226,12 @@ def test_ocr_accuracy_with_ground_truth() -> None:
     print(f"  Max detection time: {max_detection_time*1000:.1f}ms")
     print(f"  Detection FPS: {fps:.2f}")
     print("\nBreakdown:")
-    print(f"  YOLO detection: {total_yolo_time:.2f}s total, {avg_yolo_time*1000:.1f}ms avg")
-    print(f"  OCR recognition: {total_ocr_time:.2f}s total, {avg_ocr_time*1000:.1f}ms avg")
+    print(
+        f"  YOLO detection: {total_yolo_time:.2f}s total, {avg_yolo_time*1000:.1f}ms avg"
+    )
+    print(
+        f"  OCR recognition: {total_ocr_time:.2f}s total, {avg_ocr_time*1000:.1f}ms avg"
+    )
 
     # Always generate report, even if accuracy is low
     # Assert minimum accuracy (adjust threshold as needed)
@@ -463,12 +469,8 @@ def _write_accuracy_report_html(
     total_time = sum(detection_times)
 
     # Calculate YOLO and OCR timing breakdown
-    avg_yolo_time = (
-        sum(yolo_times) / len(yolo_times) if yolo_times else 0.0
-    )
-    avg_ocr_time = (
-        sum(ocr_times) / len(ocr_times) if ocr_times else 0.0
-    )
+    avg_yolo_time = sum(yolo_times) / len(yolo_times) if yolo_times else 0.0
+    avg_ocr_time = sum(ocr_times) / len(ocr_times) if ocr_times else 0.0
     total_yolo_time = sum(yolo_times)
     total_ocr_time = sum(ocr_times)
 

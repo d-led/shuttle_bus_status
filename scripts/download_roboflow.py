@@ -83,14 +83,14 @@ try:
                 else:
                     # Fallback: try version 7 (latest based on test)
                     dataset = project.version(7).download("yolov8")
-            except Exception as ve:
+            except Exception:
                 # If version detection fails, try downloading latest without version number
                 try:
                     dataset = project.download("yolov8")
                 except Exception:
                     # Last resort: try version 7
                     dataset = project.version(7).download("yolov8")
-        except Exception as e:
+        except Exception:
             # Change back to original directory before raising
             os.chdir(original_cwd)
             raise

@@ -8,6 +8,7 @@ import pytest
 
 from camera.plate_pipeline import (
     EnsemblePlateRecognizer,
+    create_plate_recognizer,
     create_plate_recognizer_from_config,
 )
 

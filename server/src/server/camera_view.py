@@ -264,6 +264,24 @@ class CameraLiveView(LiveView[dict[str, Any]]):
         if not isinstance(camera_device_options, list):
             camera_device_options = self._config.dependencies.camera_device_options
 
+        latest_detections = context.get("latest_detections")
+        if not isinstance(latest_detections, list):
+            latest_detections = []
+
+        # Pre-process detections to add computed fields for template
+        processed_detections = []
+        for det in latest_detections:
+            if not isinstance(det, dict):
+                continue
+            processed = dict(det)
+            # Calculate confidence percentage for template
+            raw_conf = det.get("raw_ocr_confidence")
+            if isinstance(raw_conf, (int, float)) and raw_conf is not None:
+                processed["confidence_percent"] = round(raw_conf * 100)
+            else:
+                processed["confidence_percent"] = None
+            processed_detections.append(processed)
+
         return {
             "title": title,
             "status": status,
@@ -275,6 +293,7 @@ class CameraLiveView(LiveView[dict[str, Any]]):
             "server_bind": self._config.dependencies.server_bind,
             "feedback_lines": list(feedback_lines),
             "config_sections": config_sections,
+            "latest_detections": processed_detections,
         }
 
     async def mount(self, socket: LiveViewSocket[dict[str, Any]], session: Any) -> None:

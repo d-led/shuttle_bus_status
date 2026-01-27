@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -228,10 +229,10 @@ def main() -> None:
     """Main entry point for the server."""
     import signal
     import sys
-    
+
     settings = Settings.load_from_project_root()
     app = create_app()
-    
+
     # Configure uvicorn for graceful shutdown
     config = uvicorn.Config(
         app,
@@ -240,21 +241,21 @@ def main() -> None:
         log_level="debug" if settings.server.debug else "info",
     )
     server = uvicorn.Server(config)
-    
+
     # Handle Ctrl-C gracefully
-    def signal_handler(sig, frame):
-        import logging
+    def signal_handler(_sig, _frame):
         logger = logging.getLogger("uvicorn.error")
         logger.info("Received interrupt signal, shutting down gracefully...")
         server.should_exit = True
-    
+
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
-    
+
     try:
         server.run()
     except KeyboardInterrupt:
         import logging
+
         logger = logging.getLogger("uvicorn.error")
         logger.info("Keyboard interrupt received, shutting down...")
         sys.exit(0)
@@ -264,11 +265,11 @@ def main_camera() -> None:
     """Main entry point for the camera server (Raspberry Pi)."""
     import signal
     import sys
-    
+
     settings = Settings.load_from_project_root()
     raw_config = load_raw_config_from_project_root()
     app = create_camera_app(settings=settings, raw_config=raw_config)
-    
+
     # Configure uvicorn for graceful shutdown
     config = uvicorn.Config(
         app,
@@ -277,16 +278,16 @@ def main_camera() -> None:
         log_level="debug" if settings.server.debug else "info",
     )
     server = uvicorn.Server(config)
-    
+
     # Handle Ctrl-C gracefully
-    def signal_handler(sig, frame):
+    def signal_handler(_sig, _frame):
         logger = logging.getLogger("uvicorn.error")
         logger.info("Received interrupt signal, shutting down gracefully...")
         server.should_exit = True
-    
+
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
-    
+
     try:
         server.run()
     except KeyboardInterrupt:

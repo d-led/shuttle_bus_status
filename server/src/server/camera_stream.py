@@ -20,6 +20,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -350,11 +351,18 @@ class CameraStreamController(CameraStreamControllerProtocol):
         self._detector: Any | None = None
         self._ocr: Any | None = None
         self._detection_running: bool = False  # Track if detection is currently running
-        self._detection_tasks: set[asyncio.Task[None]] = set()  # Track all detection tasks
-        self._latest_detections: list[dict[str, object]] = []  # Latest detection results for UI
+        self._detection_tasks: set[asyncio.Task[None]] = (
+            set()
+        )  # Track all detection tasks
+        self._latest_detections: list[dict[str, object]] = (
+            []
+        )  # Latest detection results for UI
         import threading
-        self._detections_lock = threading.Lock()  # Thread-safe lock for detections (used from thread pool)
-        
+
+        self._detections_lock = (
+            threading.Lock()
+        )  # Thread-safe lock for detections (used from thread pool)
+
         # Plate arrival/departure tracking (lazy initialization)
         self._plate_tracker: Any | None = None
 
@@ -411,7 +419,7 @@ class CameraStreamController(CameraStreamControllerProtocol):
         if self._detection_tasks:
             await asyncio.gather(*self._detection_tasks, return_exceptions=True)
         self._detection_tasks.clear()
-        
+
         # Cancel main stream task
         if self._task is not None and not self._task.done():
             self._task.cancel()
@@ -419,7 +427,7 @@ class CameraStreamController(CameraStreamControllerProtocol):
                 await self._task
         self._task = None
         self._close_capture()
-        
+
         # Close plate tracker
         if self._plate_tracker:
             self._plate_tracker.close()
@@ -654,7 +662,7 @@ class CameraStreamController(CameraStreamControllerProtocol):
             # Run detection in thread pool to avoid blocking async loop
             # This allows UI to continue updating while detection runs
             await asyncio.to_thread(self._run_plate_detection_sync)
-            
+
             # Trigger UI update after detection completes
             # (detections are already stored in _latest_detections by _run_plate_detection_sync)
             sockets = await self._snapshot_sockets()
@@ -674,8 +682,10 @@ class CameraStreamController(CameraStreamControllerProtocol):
         """Ensure plate tracker is initialized (lazy initialization)."""
         if self._plate_tracker is None:
             # Import from same package (server package)
-            from server.plate_tracker import PlateTracker
             from camera.config import Settings
+
+            from server.plate_tracker import PlateTracker
+
             settings = Settings.load_from_project_root()
             self._plate_tracker = PlateTracker(
                 debouncing=settings.debouncing,
@@ -685,7 +695,7 @@ class CameraStreamController(CameraStreamControllerProtocol):
 
     def _run_plate_detection_sync(self) -> None:
         """Run plate detection on the current frame synchronously (blocking call).
-        
+
         This is called from a thread pool to avoid blocking the async loop.
         """
         if self._cap is None:
@@ -753,30 +763,29 @@ class CameraStreamController(CameraStreamControllerProtocol):
             if result.detections:
                 # Convert detections to dict format for UI
                 from camera.reporting import _detection_to_dict
-                
+
                 detection_dicts = [_detection_to_dict(det) for det in result.detections]
-                
+
                 # Store latest detections (thread-safe update from thread pool)
                 with self._detections_lock:
                     self._latest_detections = detection_dicts
-                
+
                 # Extract plate texts for tracking
                 detected_plate_texts = [
                     det.text for det in result.detections if det.text
                 ]
-                
+
                 # Update plate tracker (check for arrivals/departures)
                 if self._plate_tracker:
                     # Use captured_at from result, or current time if not available
                     detected_at = result.captured_at
                     if detected_at is None:
-                        from datetime import datetime, UTC
                         detected_at = datetime.now(UTC)
                     self._plate_tracker.update(
                         detected_plate_texts,
                         detected_at=detected_at,
                     )
-                
+
                 for det in result.detections:
                     logger.info(
                         "Plate detected: %s (confidence: %.2f)",
@@ -787,10 +796,9 @@ class CameraStreamController(CameraStreamControllerProtocol):
                 # Clear detections if none found
                 with self._detections_lock:
                     self._latest_detections = []
-                
+
                 # Update tracker with empty detection (check for departures)
                 if self._plate_tracker:
-                    from datetime import datetime, UTC
                     detected_at = result.captured_at or datetime.now(UTC)
                     self._plate_tracker.update([], detected_at=detected_at)
 
@@ -847,7 +855,7 @@ class CameraStreamController(CameraStreamControllerProtocol):
         socket.context["camera_connected"] = frame_b64 is not None
         if frame_b64 is not None:
             socket.context["camera_frame_b64"] = frame_b64
-        
+
         # Apply latest detections to socket context
         if detections is not None:
             socket.context["latest_detections"] = detections

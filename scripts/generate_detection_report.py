@@ -18,7 +18,6 @@ from camera.plate_pipeline import (
     BBox,
     PlateCandidate,
     UltralyticsYoloPlateDetector,
-    create_plate_recognizer,
     detect_plates_from_candidates,
     detect_plates_in_image,
 )

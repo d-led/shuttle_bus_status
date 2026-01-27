@@ -209,17 +209,20 @@ class EasyOcrPlateRecognizer:
         # EasyOCR initialization can take 30-60 seconds on first run (downloads models)
         import logging
         import time as time_module
+
         logger = logging.getLogger(__name__)
-        logger.info("Initializing EasyOCR (this may take 30-60s on first run to download models)...")
+        logger.info(
+            "Initializing EasyOCR (this may take 30-60s on first run to download models)..."
+        )
         init_start = time_module.perf_counter()
-        
+
         self._reader = easyocr.Reader(
             languages,
             model_storage_directory=str(storage_dir),
             download_enabled=download_enabled,
             verbose=False,
         )
-        
+
         init_time = time_module.perf_counter() - init_start
         logger.info("EasyOCR initialized in %.2fs", init_time)
         self._min_confidence = float(min_confidence)
@@ -243,31 +246,33 @@ class EasyOcrPlateRecognizer:
         self, plate_bgr: np.ndarray
     ) -> tuple[str | None, float | None, dict[str, object]]:
         """Try multiple preprocessing strategies and return best result.
-        
+
         Optimized to use fewer strategies for normal images, all strategies only for challenging cases.
         """
         # Get original crop size for strategy selection
         h, w = plate_bgr.shape[:2]
         is_very_small = h < 30 or w < 100
         is_small = h < 50 or w < 150
-        
+
         # Adaptive strategy selection:
         # - Normal images: try 2-3 fast strategies first, early exit if good result
         # - Small images: try 4-5 strategies
         # - Very small images: try all 8 strategies
         all_strategies = _preprocess_plate_strategies(plate_bgr)
-        
+
         # Fast strategies to try first (good balance of speed/accuracy)
         # Note: "upscale_clahe_threshold" is the actual name, but we'll match by prefix
         fast_strategies = ["original", "upscale_clahe", "remove_vignette"]
-        
+
         # Select which strategies to use
         if is_very_small:
             # Very small: use all strategies
             strategies_to_try = all_strategies
         elif is_small:
             # Small: use most strategies but skip slowest ones
-            strategies_to_try = [s for s in all_strategies if s[0] not in ["flatten", "smooth_sharpen"]]
+            strategies_to_try = [
+                s for s in all_strategies if s[0] not in ["flatten", "smooth_sharpen"]
+            ]
         else:
             # Normal size: try fast strategies first, then others if needed
             strategies_to_try = []
@@ -276,10 +281,14 @@ class EasyOcrPlateRecognizer:
                 if name in fast_strategies or name.startswith("upscale_clahe"):
                     strategies_to_try.append((name, func))
             # Add remaining strategies (but limit to 2-3 more for normal images)
-            remaining = [s for s in all_strategies if s[0] not in fast_strategies and not s[0].startswith("upscale_clahe")]
+            remaining = [
+                s
+                for s in all_strategies
+                if s[0] not in fast_strategies and not s[0].startswith("upscale_clahe")
+            ]
             # For normal images, only add 2 more strategies to keep it fast
             strategies_to_try.extend(remaining[:2])
-        
+
         all_results: list[tuple[str | None, float | None, dict[str, object]]] = []
         good_enough_conf = 0.7  # Early exit if we get a high-confidence result
 
@@ -290,18 +299,22 @@ class EasyOcrPlateRecognizer:
             )
             if text is not None:
                 all_results.append((text, conf, meta))
-                
+
                 # Early exit optimization: if we get a high-confidence result from fast strategies,
                 # and the image is not very small, we can skip remaining strategies
                 if (
                     not is_very_small
-                    and (strategy_name in fast_strategies or strategy_name.startswith("upscale_clahe"))
+                    and (
+                        strategy_name in fast_strategies
+                        or strategy_name.startswith("upscale_clahe")
+                    )
                     and conf is not None
                     and conf >= good_enough_conf
                     and len(text) >= 4  # Reasonable length
                 ):
                     # Good enough result from fast strategy - skip remaining strategies
                     import logging
+
                     logger = logging.getLogger(__name__)
                     logger.debug(
                         "Early exit: got good result (conf=%.2f, text=%s) from strategy %s, skipping %d remaining strategies",
@@ -316,7 +329,10 @@ class EasyOcrPlateRecognizer:
             return (
                 None,
                 None,
-                {"preprocessing_strategies_tried": len(strategies_to_try), "all_failed": True},
+                {
+                    "preprocessing_strategies_tried": len(strategies_to_try),
+                    "all_failed": True,
+                },
             )
 
         # Select best result: prefer longer text IF confidence is reasonable, else prefer confidence
@@ -647,12 +663,12 @@ def _remove_vignette_characters(text: str) -> str:
         # Only remove if it's a common vignette character
         if single_char.upper() not in vignette_chars:
             return match.group(0)  # Keep original
-        
+
         # Additional check: vignettes are typically between letter groups
         # Don't remove if character is part of a valid city code (positions 0-2)
         # German city codes are typically 1-3 letters, so positions 0-2 are protected
         char_pos = len(prefix)
-        
+
         # Be conservative: don't remove if character is at position 0, 1, or 2
         # These positions are typically part of the city code (1-3 letters)
         # Exception: if prefix is only 1-2 letters AND suffix starts with digits,
@@ -668,7 +684,7 @@ def _remove_vignette_characters(text: str) -> str:
             if suffix and suffix[0].isalpha():
                 # Suffix starts with letter - might be part of city code, be conservative
                 return match.group(0)
-        
+
         return prefix + suffix
 
     # Try matching with explicit vignette chars first (more targeted)
@@ -1224,7 +1240,6 @@ def detect_plates_in_image(
         crop_jpeg_quality=crop_jpeg_quality,
         yolo_time=yolo_time,  # Pass YOLO time for logging
     )
-    return result
 
 
 def detect_plates_from_candidates(

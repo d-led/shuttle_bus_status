@@ -41,8 +41,9 @@ def _render_html(
     rows = "\n".join(_render_html_row(r, report_dir=report_dir) for r in results)
     # Get current timestamp in local timezone
     import time
+    from datetime import timezone
 
-    now = datetime.now(tz=None)  # Use local timezone
+    now = datetime.now(timezone.utc).astimezone()  # Use local timezone
     tz_name = (
         time.tzname[time.daylight] if time.daylight is not None else time.tzname[0]
     )
