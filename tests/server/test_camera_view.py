@@ -33,9 +33,9 @@ async def test_camera_liveview_mount_sets_initial_context() -> None:
     deps = build_camera_live_view_dependencies(
         raw_config={
             "camera": {"device": "auto"},
-            "plate_detection": {"poll_interval": 1.0},
+            "plate_detection": {"poll_interval_seconds": 1.0},
             "plate_recognition": {"languages": ["de", "en"]},
-            "debouncing": {"appearance_count": 3},
+            "debouncing": {"appearance_min_count": 3},
             "logging": {"log_level": "INFO"},
         },
         server_bind="0.0.0.0:8000",

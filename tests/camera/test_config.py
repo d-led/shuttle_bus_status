@@ -140,7 +140,7 @@ def test_default_settings() -> None:
     assert settings.camera.capture_fps == 30
     assert settings.plate_detection.model_size == "nano"
     assert settings.plate_detection.confidence_threshold == 0.5
-    assert settings.debouncing.appearance_count == 3
-    assert settings.debouncing.appearance_window == 2.0
-    assert settings.debouncing.disappearance_timeout == 5.0
+    assert settings.debouncing.appearance_min_count == 3
+    assert settings.debouncing.appearance_window_seconds == 2.0
+    assert settings.debouncing.disappearance_timeout_seconds == 5.0
     assert settings.logging.log_plates == "file"

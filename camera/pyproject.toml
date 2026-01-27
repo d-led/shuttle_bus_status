@@ -26,6 +26,9 @@ dependencies = [
     "pydantic-settings>=2.6.0",
     "structlog>=24.1.0",
     "tomli>=2.0.0; python_version < '3.11'",
+    # Optional OCR engines (install separately if needed):
+    # paddleocr>=2.7.0  # Often better for license plates
+    # pytesseract>=0.3.10  # Classic OCR (also requires system tesseract-ocr)
 ]
 
 [project.optional-dependencies]
@@ -42,6 +45,7 @@ dev = [
 ]
 dataset = [
     "roboflow>=1.1.0",
+    "kaggle>=1.6.0",
 ]
 
 [project.scripts]
@@ -83,6 +87,8 @@ module = [
     "cv2.*",
     "ultralytics.*",
     "easyocr.*",
+    "paddleocr.*",
+    "pytesseract.*",
     "structlog.*",
     "tomli.*",
 ]

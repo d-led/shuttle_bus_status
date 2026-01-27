@@ -290,6 +290,8 @@ pyrightconfig.json
 
 # Test datasets and downloaded images
 data/
+# Exception: ground truth CSV (should be committed)
+#!data/test_images/*ground_truth*.csv
 *.jpg
 *.jpeg
 *.png
@@ -298,3 +300,6 @@ data/
 
 # Generated HTML/MD reports (can be huge)
 reports/
+
+# YOLO model weights (auto-downloaded by Ultralytics if not present)
+models/*.pt

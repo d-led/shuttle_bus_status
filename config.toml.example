@@ -1,0 +1,86 @@
+# Example configuration file
+# Copy to config.toml and adjust as needed
+
+[camera]
+# Camera device selection
+# - "auto" = auto-detect first available camera
+# - "test:<directory>" = test camera device (cycles through images)
+#   Example: device = "test:data/test_images/german_plates/kaggle"
+# - Specific device: "/dev/video0" or "avfoundation:0"
+device = "auto"
+
+# Image resolution (optional, None = use camera default)
+width = null
+height = null
+
+# Capture FPS (for video streams, not used for static sampling)
+capture_fps = 30
+
+# Input format (mjpeg, yuyv, etc.). Leave empty for auto-detection
+input_format = ""
+
+[plate_detection]
+# Path to YOLO model weights file (required)
+model_path = "models/plate_detection.pt"
+
+# Confidence threshold for plate detection (0.0 to 1.0)
+confidence_threshold = 0.5
+
+# Polling interval for sampling static images (seconds)
+poll_interval_seconds = 1.0
+
+[plate_recognition]
+# OCR engine(s): single engine string or array for ensemble
+# Options: "easyocr", "paddleocr", "tesseract", "dotsocr", "chandra"
+# Example for ensemble: ocr_engine = ["dotsocr", "chandra", "easyocr"]
+ocr_engine = "easyocr"
+
+# Languages for OCR (German is required, add others if needed)
+languages = ["de", "en"]
+
+# Minimum confidence for OCR text recognition (0.0 to 1.0)
+min_confidence = 0.3
+
+# Enable plate-oriented preprocessing before OCR
+# DISABLED BY DEFAULT: Test results show no accuracy improvement, and it slows processing 5-10x
+# Only enable if you have specific evidence it helps your use case
+preprocess = false
+
+# Use allowlist to filter OCR results (A-Z, 0-9 only)
+allowlist = true
+allowlist_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+# Normalize plate text (remove non-alphanumeric characters)
+normalize = true
+
+[debouncing]
+# Minimum number of appearances before a plate is considered "detected"
+appearance_min_count = 2
+
+# Time window for counting appearances (seconds)
+appearance_window_seconds = 5.0
+
+# Timeout before a plate is considered "disappeared" (seconds)
+disappearance_timeout_seconds = 30.0
+
+[logging]
+# Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+log_level = "INFO"
+
+# Whether to also log to stdout
+log_to_console = true
+
+[server]
+# Server host and port
+host = "0.0.0.0"
+port = 8001
+
+# Debug mode (more verbose logging)
+debug = false
+
+[public_server]
+# Future: Public server configuration
+# This section is reserved for future implementation
+# host = "0.0.0.0"
+# port = 8000
+# debug = false

@@ -115,6 +115,9 @@ def _rows_from_config_section(
     if not isinstance(section_value, dict):
         return []
 
+    # Filter out misleading settings that don't apply to our static image sampling
+    excluded_keys = {"capture_fps"} if section_key == "camera" else set()
+
     items = sorted(section_value.items(), key=lambda kv: str(kv[0]))
     return [
         ConfigTableRow(
@@ -123,6 +126,7 @@ def _rows_from_config_section(
             value=_stringify_config_value(value),
         )
         for key, value in items
+        if key not in excluded_keys
     ]
 
 

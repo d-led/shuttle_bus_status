@@ -113,7 +113,7 @@ def create_camera_app(
     stream = _build_camera_stream(raw_config)
     deps = build_camera_live_view_dependencies(
         raw_config=raw_config,
-        server_bind=f"{settings.public_server.host}:{settings.public_server.port}",
+        server_bind=f"{settings.server.host}:{settings.server.port}",
         stream=stream,
     )
     route_display = build_route_display_settings(raw_config=raw_config)
@@ -191,13 +191,19 @@ def _get_device(section: dict[str, Any]) -> str:
 
 
 def _get_poll_interval_s(section: dict[str, Any]) -> float:
-    value = section.get("poll_interval", 1.0)
+    value = section.get("poll_interval_seconds", 1.0)
     return float(value) if isinstance(value, float | int) else 1.0
+
+
+def _get_float(section: dict[str, Any], key: str, default: float) -> float:
+    value = section.get(key, default)
+    return float(value) if isinstance(value, float | int) else default
 
 
 def _build_camera_stream(raw_config: dict[str, Any]) -> CameraStreamController:
     camera_cfg = _section(raw_config, "camera")
     plate_detection_cfg = _section(raw_config, "plate_detection")
+    test_camera_cfg = _section(raw_config, "test_camera")
     raw_device = _get_device(camera_cfg)
     capture_fps = _get_int(camera_cfg, "capture_fps")
 
@@ -208,33 +214,85 @@ def _build_camera_stream(raw_config: dict[str, Any]) -> CameraStreamController:
             height=_get_int(camera_cfg, "height"),
             capture_fps=capture_fps,
             poll_interval_s=_get_poll_interval_s(plate_detection_cfg),
+            test_min_duration_s=_get_float(
+                test_camera_cfg, "min_duration_seconds", 1.0
+            ),
+            test_max_duration_s=_get_float(
+                test_camera_cfg, "max_duration_seconds", 15.0
+            ),
         )
     )
 
 
 def main() -> None:
     """Main entry point for the server."""
+    import signal
+    import sys
+    
     settings = Settings.load_from_project_root()
     app = create_app()
-    uvicorn.run(
+    
+    # Configure uvicorn for graceful shutdown
+    config = uvicorn.Config(
         app,
         host=settings.server.host,
         port=settings.server.port,
         log_level="debug" if settings.server.debug else "info",
     )
+    server = uvicorn.Server(config)
+    
+    # Handle Ctrl-C gracefully
+    def signal_handler(sig, frame):
+        import logging
+        logger = logging.getLogger("uvicorn.error")
+        logger.info("Received interrupt signal, shutting down gracefully...")
+        server.should_exit = True
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    try:
+        server.run()
+    except KeyboardInterrupt:
+        import logging
+        logger = logging.getLogger("uvicorn.error")
+        logger.info("Keyboard interrupt received, shutting down...")
+        sys.exit(0)
 
 
 def main_camera() -> None:
     """Main entry point for the camera server (Raspberry Pi)."""
+    import signal
+    import sys
+    
     settings = Settings.load_from_project_root()
     raw_config = load_raw_config_from_project_root()
     app = create_camera_app(settings=settings, raw_config=raw_config)
-    uvicorn.run(
+    
+    # Configure uvicorn for graceful shutdown
+    config = uvicorn.Config(
         app,
-        host=settings.public_server.host,
-        port=settings.public_server.port,
-        log_level="debug" if settings.public_server.debug else "info",
+        host=settings.server.host,
+        port=settings.server.port,
+        log_level="debug" if settings.server.debug else "info",
     )
+    server = uvicorn.Server(config)
+    
+    # Handle Ctrl-C gracefully
+    def signal_handler(sig, frame):
+        logger = logging.getLogger("uvicorn.error")
+        logger.info("Received interrupt signal, shutting down gracefully...")
+        server.should_exit = True
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
+    try:
+        server.run()
+    except KeyboardInterrupt:
+        logger = logging.getLogger("uvicorn.error")
+        logger.info("Keyboard interrupt received, shutting down...")
+        sys.exit(0)
 
 
 if __name__ == "__main__":

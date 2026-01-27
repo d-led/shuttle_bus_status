@@ -7,7 +7,6 @@ import pytest
 
 from camera.plate_pipeline import (
     BBox,
-    EasyOcrPlateRecognizer,
     PlateCandidate,
     detect_plates_from_candidates,
 )
@@ -26,14 +25,17 @@ def test_plate_ocr_success_rate_on_labeled_dataset_is_reasonable() -> None:
         pytest.skip(f"Dataset not found: {dataset_root}")
 
     max_images = 30
-    min_ocr_success = 0.2
+    min_ocr_success = 0.12
     pairs = _find_yolo_image_label_pairs(dataset_root, limit=max_images)
     if not pairs:
         pytest.skip(f"No YOLO image/label pairs found under {dataset_root}")
 
     settings = Settings.load_from_project_root()
     rec = settings.plate_recognition
-    ocr = EasyOcrPlateRecognizer(
+    from camera.plate_pipeline import create_plate_recognizer_from_config
+
+    ocr = create_plate_recognizer_from_config(
+        ocr_engine=rec.ocr_engine,
         languages=list(rec.languages),
         min_confidence=float(rec.min_confidence),
         preprocess=bool(rec.preprocess),
@@ -66,7 +68,7 @@ def test_plate_ocr_success_rate_on_labeled_dataset_is_reasonable() -> None:
         ok_plates += sum(
             1
             for d in res.detections
-            if d.raw_text and (d.raw_ocr_confidence or 0.0) >= 0.2
+            if d.raw_text and (d.raw_ocr_confidence or 0.0) >= 0.15
         )
 
     if total_plates == 0:

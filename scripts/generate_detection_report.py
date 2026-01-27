@@ -16,9 +16,9 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from camera.plate_pipeline import (
     BBox,
-    EasyOcrPlateRecognizer,
     PlateCandidate,
     UltralyticsYoloPlateDetector,
+    create_plate_recognizer,
     detect_plates_from_candidates,
     detect_plates_in_image,
 )
@@ -66,7 +66,10 @@ def main() -> int:
 
     settings = Settings.load_from_project_root()
     rec = settings.plate_recognition
-    ocr = EasyOcrPlateRecognizer(
+    from camera.plate_pipeline import create_plate_recognizer_from_config
+    
+    ocr = create_plate_recognizer_from_config(
+        ocr_engine=rec.ocr_engine,
         languages=list(rec.languages),
         min_confidence=float(args.ocr_min_conf),
         preprocess=bool(rec.preprocess),

@@ -1,0 +1,23 @@
+# Example: Ensemble OCR Configuration
+# Copy relevant sections to your config.toml
+
+[plate_recognition]
+# Option 1: Single engine (default)
+# ocr_engine = "easyocr"
+
+# Option 2: Ensemble - try multiple engines, pick best result
+# High accuracy ensemble (requires GPU for dotsocr/chandra)
+ocr_engine = ["dotsocr", "chandra", "easyocr"]
+
+# Option 3: Balanced ensemble (CPU-friendly)
+# ocr_engine = ["easyocr", "paddleocr", "tesseract"]
+
+# Option 4: Fast ensemble (two engines)
+# ocr_engine = ["easyocr", "paddleocr"]
+
+# Rest of config...
+languages = ["de", "en"]
+min_confidence = 0.5
+preprocess = false
+allowlist = true
+normalize = true

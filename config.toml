@@ -4,7 +4,26 @@
 [camera]
 # Camera device path. Use "auto" for automatic detection of the first available video device,
 # or specify a specific path like "/dev/video0"
-device = "auto"
+# 
+# IMPORTANT: "auto" will prefer real cameras over test devices. Test devices are only
+# used as fallback when no real camera is available.
+#
+# For test camera device, use "test:<directory>" format, e.g.:
+# device = "test:data/test_camera"  # Test camera (cycles through images)
+# device = "auto"
+# device = "test:data/test_camera"
+# device = "test:data/test_images/german_plates/kaggle"
+# device = "test:data/test_images/german_plates/roboflow/german-license-plates-7/train/images"
+device = "test:data/test_images/german_plates/roboflow/german-license-plates-7/test/images"
+
+# Test camera device configuration (only used when device starts with "test:")
+[test_camera]
+# Minimum cycles to linger on each image (number of read() calls before switching)
+# Each cycle = one read() call = one detection attempt
+min_duration_seconds = 1.0  # Interpreted as cycles, not seconds
+
+# Maximum cycles to linger on each image (number of read() calls before switching)
+max_duration_seconds = 15.0  # Interpreted as cycles, not seconds
 
 # Camera resolution. Use "auto" to use camera's default/native resolution,
 # or specify width and height in pixels (e.g., 1920, 1080)
@@ -12,7 +31,7 @@ width = 1920
 height = 1080
 
 # Requested camera capture FPS (this is NOT the sampling rate).
-# Sampling rate is controlled by `plate_detection.poll_interval`.
+# Sampling rate is controlled by `plate_detection.poll_interval_seconds`.
 capture_fps = 30
 
 # Input format (mjpeg, yuyv, etc.). Leave empty for auto-detection
@@ -27,33 +46,43 @@ model_size = "nano"
 confidence_threshold = 0.5
 
 # Detection polling interval in seconds
-poll_interval = 1.0
+poll_interval_seconds = 1.0
 
 [plate_recognition]
+# OCR engine(s): single engine string or array for ensemble
+# Options: "easyocr", "paddleocr", "tesseract", "dotsocr", "chandra"
+# Example for ensemble: ocr_engine = ["dotsocr", "chandra", "easyocr"]
+ocr_engine = "easyocr"
+
 # Languages for OCR (German is required, add others if needed)
 languages = ["de", "en"]
 
 # Minimum confidence for OCR text recognition (0.0 to 1.0)
-min_confidence = 0.5
+# Lower threshold allows more detections but may include false positives
+# With multiple preprocessing strategies, can be lower as best result is selected
+min_confidence = 0.1
 
 # Optional OCR improvements (toggle on/off):
-# - preprocess: plate-oriented preprocessing before OCR (upscale/contrast/sharpen/threshold)
-# - allowlist: restrict OCR to A-Z and digits
+# - preprocess: DISABLED - Test results show no accuracy improvement, and it slows processing 5-10x
+#   If enabled, uses adaptive preprocessing (tries 3-8 strategies based on image size, picks best)
+#   Strategies: original, upscale+CLAHE+threshold, to_zero_180, morphological, Otsu, flatten, smooth_sharpen, remove_vignette
+# - allowlist: restrict OCR to A-Z and digits (reduces garbage characters)
 # - normalize: normalize output (uppercase, strip separators)
-preprocess = false
-allowlist = false
+# - character_correction: Apply position-based character correction (O→0, I→1, etc.)
+preprocess = false  # DISABLED: Test results show no accuracy improvement. Keep disabled for speed (0.5-2s vs 5-15s).
+allowlist = true
 allowlist_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-normalize = false
+normalize = true
 
 [debouncing]
 # Number of detections required before a plate is considered "appeared"
-appearance_count = 3
+appearance_min_count = 3
 
 # Time window in seconds for appearance detection
-appearance_window = 2.0
+appearance_window_seconds = 2.0
 
 # Time in seconds a plate must be absent before it's considered "disappeared"
-disappearance_timeout = 5.0
+disappearance_timeout_seconds = 5.0
 
 [logging]
 # Where to log plate events (privacy-sensitive): "file" | "console" | "no"
@@ -73,12 +102,14 @@ log_to_console = true
 host = "0.0.0.0"
 
 # Server port
-port = 8000
+port = 8001
 
 # Whether to enable debug mode
 debug = false
 
 [public_server]
+# Public server configuration (not yet implemented)
+# This will be a separate server for public access
 
 # Server host address
 host = "0.0.0.0"

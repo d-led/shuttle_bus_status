@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import asdict, is_dataclass
-from datetime import datetime  # noqa: TC003
+from datetime import datetime
 from html import escape
 from pathlib import Path
 from typing import Any
@@ -39,6 +39,14 @@ def _render_html(
     *, title: str, results: list[ImagePlateDetections], report_dir: Path
 ) -> str:
     rows = "\n".join(_render_html_row(r, report_dir=report_dir) for r in results)
+    # Get current timestamp in local timezone
+    import time
+
+    now = datetime.now(tz=None)  # Use local timezone
+    tz_name = (
+        time.tzname[time.daylight] if time.daylight is not None else time.tzname[0]
+    )
+    report_timestamp = now.strftime("%Y-%m-%d %H:%M:%S") + f" {tz_name}"
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -52,6 +60,7 @@ def _render_html(
     }}
     body {{ font-family: var(--sans); margin: 24px; color: #111; }}
     h1 {{ margin: 0 0 16px 0; font-size: 20px; }}
+    .timestamp {{ font-family: var(--mono); font-size: 12px; color: #6b7280; margin-bottom: 16px; }}
     .grid {{ display: grid; grid-template-columns: minmax(240px, 520px) 1fr; gap: 16px; }}
     .card {{ border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; background: #fff; }}
     .img {{ border-radius: 8px; border: 1px solid #f3f4f6; object-fit: contain; display: block; }}
@@ -65,6 +74,7 @@ def _render_html(
 </head>
 <body>
   <h1>{escape(title)} <span class="badge">{len(results)} images</span></h1>
+  <div class="timestamp">Report generated: {report_timestamp}</div>
   {rows}
 </body>
 </html>

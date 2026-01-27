@@ -74,7 +74,7 @@ class PlateDetectionSettings(BaseSettings):
         le=1.0,
         description="Confidence threshold for plate detection",
     )
-    poll_interval: float = Field(
+    poll_interval_seconds: float = Field(
         default=1.0,
         ge=0.1,
         description="Detection polling interval in seconds",
@@ -83,6 +83,21 @@ class PlateDetectionSettings(BaseSettings):
 
 class PlateRecognitionSettings(BaseSettings):
     """License plate text recognition configuration."""
+
+    ocr_engine: str | list[str] = Field(
+        default="easyocr",
+        description="OCR engine(s): single engine string or list for ensemble. Options: easyocr, paddleocr, tesseract, dotsocr, chandra",
+    )
+
+    @field_validator("ocr_engine", mode="before")
+    @classmethod
+    def validate_ocr_engine(cls, v: object) -> str | list[str]:
+        """Ensure ocr_engine is string or list of strings."""
+        if isinstance(v, str):
+            return v
+        if isinstance(v, list):
+            return [str(item) for item in v]
+        return str(v)
 
     languages: list[str] = Field(
         default_factory=lambda: ["de", "en"],
@@ -96,7 +111,8 @@ class PlateRecognitionSettings(BaseSettings):
     )
     preprocess: bool = Field(
         default=False,
-        description="Enable plate-oriented preprocessing before OCR (upscale/contrast/sharpen/threshold)",
+        description="Enable plate-oriented preprocessing before OCR (upscale/contrast/sharpen/threshold). "
+        "DISABLED by default: Test results show no accuracy improvement, and it significantly slows down processing.",
     )
     allowlist: bool = Field(
         default=False,
@@ -115,17 +131,17 @@ class PlateRecognitionSettings(BaseSettings):
 class DebouncingSettings(BaseSettings):
     """Debouncing configuration for plate appearance/disappearance."""
 
-    appearance_count: int = Field(
+    appearance_min_count: int = Field(
         default=3,
         ge=1,
         description="Number of detections required before a plate is considered 'appeared'",
     )
-    appearance_window: float = Field(
+    appearance_window_seconds: float = Field(
         default=2.0,
         ge=0.1,
         description="Time window in seconds for appearance detection",
     )
-    disappearance_timeout: float = Field(
+    disappearance_timeout_seconds: float = Field(
         default=5.0,
         ge=0.1,
         description="Time in seconds a plate must be absent before it's considered 'disappeared'",
