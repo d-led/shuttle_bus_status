@@ -5,9 +5,17 @@ Server component for shuttle bus status monitoring using pyview-web for live upd
 ## Quick Start
 
 1. Run the setup script:
+   
+   **For development (includes dev tools):**
    ```bash
-   ./scripts/setup_server.sh
+   ./scripts/setup.sh
    ```
+   
+   **For production (Raspberry Pi - no dev tools):**
+   ```bash
+   ./scripts/setup_prod.sh
+   ```
+   
    This works on macOS, Linux, and Raspberry Pi.
 
 2. Start the camera server:
@@ -18,7 +26,7 @@ Server component for shuttle bus status monitoring using pyview-web for live upd
 
 3. Alternatively, activate the virtual environment and run manually:
    ```bash
-   source .venv/bin/activate  # or ~/server-venv/bin/activate on Raspberry Pi
+   source .venv/bin/activate
    python -m server.main
    # or
    shuttle-bus-status-server
@@ -28,7 +36,7 @@ Server component for shuttle bus status monitoring using pyview-web for live upd
 
 - **macOS**: Uses `.venv` in project root. Full support for development and testing.
 - **Linux**: Uses `.venv` in project root. Works on Ubuntu, Debian, and other distributions.
-- **Raspberry Pi**: Uses `~/server-venv` or `~/camera-venv` for easier access. Optimized for deployment.
+- **Raspberry Pi**: Uses `.venv` in project root (unified location). Use `setup_prod.sh` for production deployment.
 
 ## Configuration
 
