@@ -36,6 +36,15 @@ languages = ["de", "en"]
 # Minimum confidence for OCR text recognition (0.0 to 1.0)
 min_confidence = 0.5
 
+# Optional OCR improvements (toggle on/off):
+# - preprocess: plate-oriented preprocessing before OCR (upscale/contrast/sharpen/threshold)
+# - allowlist: restrict OCR to A-Z and digits
+# - normalize: normalize output (uppercase, strip separators)
+preprocess = false
+allowlist = false
+allowlist_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+normalize = false
+
 [debouncing]
 # Number of detections required before a plate is considered "appeared"
 appearance_count = 3

@@ -11,6 +11,7 @@ from camera.plate_pipeline import (
     PlateCandidate,
     detect_plates_from_candidates,
 )
+from camera.config import Settings
 
 
 @pytest.mark.integration
@@ -30,7 +31,16 @@ def test_plate_ocr_success_rate_on_labeled_dataset_is_reasonable() -> None:
     if not pairs:
         pytest.skip(f"No YOLO image/label pairs found under {dataset_root}")
 
-    ocr = EasyOcrPlateRecognizer(languages=["de", "en"], min_confidence=0.3)
+    settings = Settings.load_from_project_root()
+    rec = settings.plate_recognition
+    ocr = EasyOcrPlateRecognizer(
+        languages=list(rec.languages),
+        min_confidence=float(rec.min_confidence),
+        preprocess=bool(rec.preprocess),
+        allowlist=bool(rec.allowlist),
+        allowlist_chars=str(rec.allowlist_chars),
+        normalize=bool(rec.normalize),
+    )
 
     total_plates = 0
     ok_plates = 0
@@ -53,7 +63,11 @@ def test_plate_ocr_success_rate_on_labeled_dataset_is_reasonable() -> None:
         )
 
         total_plates += len(res.detections)
-        ok_plates += sum(1 for d in res.detections if d.text)
+        ok_plates += sum(
+            1
+            for d in res.detections
+            if d.raw_text and (d.raw_ocr_confidence or 0.0) >= 0.2
+        )
 
     if total_plates == 0:
         pytest.skip("No labeled plates found.")

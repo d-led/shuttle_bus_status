@@ -23,6 +23,7 @@ from camera.plate_pipeline import (
     detect_plates_in_image,
 )
 from camera.reporting import write_detection_report_html, write_detection_report_md
+from camera.config import Settings
 
 
 def main() -> int:
@@ -63,7 +64,16 @@ def main() -> int:
     if not dataset_dir.exists():
         raise SystemExit(f"Dataset dir not found: {dataset_dir}")
 
-    ocr = EasyOcrPlateRecognizer(languages=["de", "en"], min_confidence=args.ocr_min_conf)
+    settings = Settings.load_from_project_root()
+    rec = settings.plate_recognition
+    ocr = EasyOcrPlateRecognizer(
+        languages=list(rec.languages),
+        min_confidence=float(args.ocr_min_conf),
+        preprocess=bool(rec.preprocess),
+        allowlist=bool(rec.allowlist),
+        allowlist_chars=str(rec.allowlist_chars),
+        normalize=bool(rec.normalize),
+    )
 
     pairs = _collect_images_with_optional_labels(dataset_dir)[: args.max_images]
     images = [p[0] for p in pairs]

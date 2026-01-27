@@ -21,6 +21,8 @@ def test_write_detection_report_html_writes_two_column_layout(tmp_path: Path) ->
                 detection_confidence=0.9,
                 text="M AB 1234",
                 ocr_confidence=0.8,
+                raw_text="M AB 1234",
+                raw_ocr_confidence=0.8,
                 reliability=0.72,
                 crop_jpeg_b64=None,
                 metadata={"k": "v"},

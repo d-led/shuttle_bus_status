@@ -94,6 +94,22 @@ class PlateRecognitionSettings(BaseSettings):
         le=1.0,
         description="Minimum confidence for OCR text recognition",
     )
+    preprocess: bool = Field(
+        default=False,
+        description="Enable plate-oriented preprocessing before OCR (upscale/contrast/sharpen/threshold)",
+    )
+    allowlist: bool = Field(
+        default=False,
+        description="Enable OCR allowlist (A-Z and digits) to reduce garbage characters",
+    )
+    allowlist_chars: str = Field(
+        default="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+        description="Characters allowed when allowlist is enabled",
+    )
+    normalize: bool = Field(
+        default=False,
+        description="Normalize recognized plate text (uppercase, strip separators, keep A-Z/0-9 only)",
+    )
 
 
 class DebouncingSettings(BaseSettings):

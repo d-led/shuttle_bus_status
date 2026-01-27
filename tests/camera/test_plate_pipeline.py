@@ -28,7 +28,11 @@ class _FakeDetector:
 @dataclass(frozen=True)
 class _FakeOcr:
     def recognize(self, _plate_bgr: np.ndarray):  # type: ignore[no-untyped-def]
-        return "M AB 1234", 0.8, {"engine": "fake"}
+        return (
+            "M AB 1234",
+            0.8,
+            {"engine": "fake", "raw_text": "M AB 1234", "raw_confidence": 0.8},
+        )
 
 
 def test_detect_plates_in_image_returns_typed_result_with_timestamp() -> None:
@@ -50,6 +54,8 @@ def test_detect_plates_in_image_returns_typed_result_with_timestamp() -> None:
     assert det.text == "M AB 1234"
     assert det.detection_confidence == 0.9
     assert det.ocr_confidence == 0.8
+    assert det.raw_text == "M AB 1234"
+    assert det.raw_ocr_confidence == 0.8
     assert det.reliability == 0.9 * 0.8
     assert det.crop_jpeg_b64 is None
 

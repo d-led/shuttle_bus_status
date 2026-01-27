@@ -9,13 +9,14 @@ This module is intentionally:
 from __future__ import annotations
 
 import base64
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
 
 import cv2
-import numpy as np  # noqa: TC002
+import numpy as np
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,8 @@ class PlateDetection:
     detection_confidence: float
     text: str | None
     ocr_confidence: float | None
+    raw_text: str | None
+    raw_ocr_confidence: float | None
     reliability: float
     crop_jpeg_b64: str | None
     metadata: dict[str, object]
@@ -193,6 +196,10 @@ class EasyOcrPlateRecognizer:
         min_confidence: float = 0.5,
         model_storage_directory: Path | None = None,
         download_enabled: bool = True,
+        preprocess: bool = False,
+        allowlist: bool = False,
+        allowlist_chars: str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+        normalize: bool = False,
     ) -> None:
         import easyocr  # heavy import, but explicit dependency at startup
 
@@ -206,34 +213,109 @@ class EasyOcrPlateRecognizer:
             verbose=False,
         )
         self._min_confidence = float(min_confidence)
+        self._preprocess = bool(preprocess)
+        self._allowlist = bool(allowlist)
+        self._allowlist_chars = str(allowlist_chars)
+        self._normalize = bool(normalize)
 
     def recognize(
         self, plate_bgr: np.ndarray
     ) -> tuple[str | None, float | None, dict[str, object]]:
-        # easyocr expects RGB.
-        plate_rgb = cv2.cvtColor(plate_bgr, cv2.COLOR_BGR2RGB)
-        results = self._reader.readtext(plate_rgb)
-        if not results:
-            return None, None, {"candidates": 0}
+        plate_rgb = self._prepare_plate_rgb_for_ocr(plate_bgr)
+        results = self._reader.readtext(plate_rgb, **self._easyocr_kwargs())
+        best = _best_easyocr_candidate(results)
+        if best is None:
+            return (
+                None,
+                None,
+                {"candidates": len(results), "raw_text": None, "raw_confidence": None},
+            )
 
-        best_text: str | None = None
-        best_conf: float | None = None
-        for _bbox, text, conf in results:
-            text_str = str(text).strip()
-            conf_f = float(conf)
-            if not text_str:
-                continue
-            if best_conf is None or conf_f > best_conf:
-                best_text = text_str
-                best_conf = conf_f
+        raw_text, raw_conf = best
+        normalized_text = (
+            _normalize_plate_text(raw_text) if self._normalize else raw_text
+        )
+        meta: dict[str, object] = {
+            "candidates": len(results),
+            "raw_text": raw_text,
+            "raw_confidence": raw_conf,
+            "normalized_text": normalized_text if self._normalize else None,
+            "preprocess": self._preprocess,
+            "allowlist": self._allowlist,
+        }
 
-        if best_text is None or best_conf is None:
-            return None, None, {"candidates": len(results)}
+        if raw_conf < self._min_confidence:
+            return None, raw_conf, meta
 
-        if best_conf < self._min_confidence:
-            return None, best_conf, {"candidates": len(results)}
+        return (normalized_text if self._normalize else raw_text), raw_conf, meta
 
-        return best_text, best_conf, {"candidates": len(results)}
+    def _prepare_plate_rgb_for_ocr(self, plate_bgr: np.ndarray) -> np.ndarray:
+        processed = (
+            _preprocess_plate_for_ocr(plate_bgr) if self._preprocess else plate_bgr
+        )
+        return cv2.cvtColor(processed, cv2.COLOR_BGR2RGB)
+
+    def _easyocr_kwargs(self) -> dict[str, object]:
+        if not self._allowlist:
+            return {}
+        return {"allowlist": self._allowlist_chars}
+
+
+def _best_easyocr_candidate(results: object) -> tuple[str, float] | None:
+    if not isinstance(results, list) or not results:
+        return None
+    best_text: str | None = None
+    best_conf: float | None = None
+    for item in results:
+        if not isinstance(item, (list, tuple)) or len(item) < 3:
+            continue
+        text_str = str(item[1]).strip()
+        if not text_str:
+            continue
+        conf_f = float(item[2])
+        if best_conf is None or conf_f > best_conf:
+            best_text = text_str
+            best_conf = conf_f
+    if best_text is None or best_conf is None:
+        return None
+    return best_text, best_conf
+
+
+_PLATE_NORMALIZE_RE = re.compile(r"[^A-Z0-9]+")
+
+
+def _normalize_plate_text(text: str) -> str:
+    upper = text.upper()
+    return _PLATE_NORMALIZE_RE.sub("", upper)
+
+
+def _preprocess_plate_for_ocr(plate_bgr: np.ndarray) -> np.ndarray:
+    if plate_bgr.size == 0:
+        return plate_bgr
+
+    h, w = plate_bgr.shape[:2]
+    up = cv2.resize(
+        plate_bgr,
+        (max(1, int(w * 2.0)), max(1, int(h * 2.0))),
+        interpolation=cv2.INTER_CUBIC,
+    )
+    gray = cv2.cvtColor(up, cv2.COLOR_BGR2GRAY)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    eq = clahe.apply(gray)
+    sharp = cv2.filter2D(
+        eq,
+        -1,
+        np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]], dtype=np.int16),
+    )
+    thr = cv2.adaptiveThreshold(
+        sharp,
+        255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        31,
+        5,
+    )
+    return cv2.cvtColor(thr, cv2.COLOR_GRAY2BGR)
 
 
 def detect_plates_in_image(
@@ -292,6 +374,14 @@ def detect_plates_from_candidates(
         bbox = cand.bbox.clamp(width=width, height=height)
         crop = image_bgr[bbox.y1 : bbox.y2, bbox.x1 : bbox.x2]
         text, ocr_conf, ocr_meta = ocr.recognize(crop)
+        raw_text_value = ocr_meta.get("raw_text")
+        raw_text = raw_text_value if isinstance(raw_text_value, str) else text
+        raw_confidence = ocr_meta.get("raw_confidence")
+        raw_ocr_conf = (
+            float(raw_confidence)
+            if isinstance(raw_confidence, float | int)
+            else ocr_conf
+        )
         crop_b64 = (
             _crop_preview_jpeg_b64(
                 crop,
@@ -313,6 +403,8 @@ def detect_plates_from_candidates(
                 detection_confidence=cand.confidence,
                 text=text,
                 ocr_confidence=ocr_conf,
+                raw_text=raw_text,
+                raw_ocr_confidence=raw_ocr_conf,
                 reliability=reliability,
                 crop_jpeg_b64=crop_b64,
                 metadata={
