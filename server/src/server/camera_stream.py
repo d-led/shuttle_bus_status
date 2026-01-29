@@ -738,6 +738,75 @@ class CameraStreamController(CameraStreamControllerProtocol):
                 settings=settings,
             )
 
+    def _log_init_time_if_slow(self, init_time: float) -> None:
+        """Log detection component init time if above thresholds."""
+        if init_time > 1.0:
+            logger.warning(
+                "Detection component initialization took %.2fs (this should only happen once on first detection)",
+                init_time,
+            )
+        elif init_time > 0.1:
+            logger.info(
+                "Detection component initialization took %.2fs",
+                init_time,
+            )
+
+    def _log_detect_time_if_slow(self, detect_time: float) -> None:
+        """Log plate detection duration if above thresholds."""
+        if detect_time > 10.0:
+            logger.error(
+                "Plate detection took %.2fs total - TOO SLOW! "
+                "Check logs for YOLO/OCR breakdown. "
+                "SOLUTION: Set preprocess=false in config.toml and/or use faster OCR engine (tesseract)",
+                detect_time,
+            )
+        elif detect_time > 5.0:
+            logger.warning(
+                "Plate detection took %.2fs total. "
+                "Check debug logs for YOLO/OCR breakdown. "
+                "Consider: reducing image resolution, disabling preprocessing, or using faster OCR engine",
+                detect_time,
+            )
+        elif detect_time > 2.0:
+            logger.info(
+                "Plate detection took %.2fs total (check debug logs for YOLO/OCR breakdown)",
+                detect_time,
+            )
+
+    def _store_detections_and_update_tracker(
+        self,
+        valid_detections: list[Any],
+        result: Any,
+    ) -> None:
+        """Store detection dicts for UI and update plate tracker."""
+        from camera.reporting import _detection_to_dict
+
+        detection_dicts = [_detection_to_dict(det) for det in valid_detections]
+        with self._detections_lock:
+            self._latest_detections = detection_dicts
+        logger.debug("Stored %d detections in _latest_detections", len(detection_dicts))
+        detected_at = result.captured_at or datetime.now(UTC)
+        if self._plate_tracker:
+            self._plate_tracker.update(
+                [det.text for det in valid_detections],
+                detected_at=detected_at,
+            )
+        for det in valid_detections:
+            logger.info(
+                "Plate detected: %s (confidence: %.2f)",
+                det.text,
+                det.raw_ocr_confidence or 0.0,
+            )
+
+    def _clear_detections_and_update_tracker(self, result: Any) -> None:
+        """Clear UI detections and update tracker with empty list."""
+        with self._detections_lock:
+            self._latest_detections = []
+        logger.debug("No detections found, clearing _latest_detections")
+        if self._plate_tracker:
+            detected_at = result.captured_at or datetime.now(UTC)
+            self._plate_tracker.update([], detected_at=detected_at)
+
     def _run_plate_detection_sync(self) -> None:
         """Run plate detection on the current frame synchronously (blocking call).
 
@@ -745,28 +814,14 @@ class CameraStreamController(CameraStreamControllerProtocol):
         """
         if self._cap is None:
             return
-
         try:
             init_start = time.perf_counter()
             self._ensure_detection_components()
-            self._ensure_plate_tracker()  # Initialize tracker if needed
-            init_time = time.perf_counter() - init_start
-            if init_time > 1.0:
-                logger.warning(
-                    "Detection component initialization took %.2fs (this should only happen once on first detection)",
-                    init_time,
-                )
-            elif init_time > 0.1:
-                logger.info(
-                    "Detection component initialization took %.2fs",
-                    init_time,
-                )
+            self._ensure_plate_tracker()
+            self._log_init_time_if_slow(time.perf_counter() - init_start)
 
             if self._detector is None or self._ocr is None:
-                return  # Detection not available
-
-            # Get stored frame (same one that was displayed)
-            # This ensures detection runs on the same frame shown in UI
+                return
             with self._detections_lock:
                 frame = (
                     self._current_frame_bgr.copy()
@@ -778,8 +833,6 @@ class CameraStreamController(CameraStreamControllerProtocol):
                 return
 
             logger.debug("Running detection on frame: shape=%s", frame.shape)
-
-            # Run detection synchronously (blocking call, but in background thread)
             from camera.plate_pipeline import detect_plates_in_image
 
             detect_start = time.perf_counter()
@@ -791,7 +844,6 @@ class CameraStreamController(CameraStreamControllerProtocol):
             )
             detect_time = time.perf_counter() - detect_start
 
-            # Check if result is None (shouldn't happen, but handle gracefully)
             if result is None:
                 logger.error(
                     "detect_plates_in_image returned None - this should not happen"
@@ -800,82 +852,16 @@ class CameraStreamController(CameraStreamControllerProtocol):
                     self._latest_detections = []
                 return
 
-            # Log timing breakdown (YOLO/OCR times are logged inside detect_plates_in_image)
-            # But also log here for visibility
-            if detect_time > 10.0:
-                logger.error(
-                    "Plate detection took %.2fs total - TOO SLOW! "
-                    "Check logs for YOLO/OCR breakdown. "
-                    "SOLUTION: Set preprocess=false in config.toml and/or use faster OCR engine (tesseract)",
-                    detect_time,
-                )
-            elif detect_time > 5.0:
-                logger.warning(
-                    "Plate detection took %.2fs total. "
-                    "Check debug logs for YOLO/OCR breakdown. "
-                    "Consider: reducing image resolution, disabling preprocessing, or using faster OCR engine",
-                    detect_time,
-                )
-            elif detect_time > 2.0:
-                logger.info(
-                    "Plate detection took %.2fs total (check debug logs for YOLO/OCR breakdown)",
-                    detect_time,
-                )
-
-            # Log detections if any and store for UI
-            # Filter out detections with no text (YOLO found a box but OCR failed)
+            self._log_detect_time_if_slow(detect_time)
             valid_detections = [
                 det for det in result.detections if det.text is not None
             ]
-
             if valid_detections:
-                # Convert detections to dict format for UI
-                from camera.reporting import _detection_to_dict
-
-                detection_dicts = [_detection_to_dict(det) for det in valid_detections]
-
-                # Store latest detections (thread-safe update from thread pool)
-                with self._detections_lock:
-                    self._latest_detections = detection_dicts
-                logger.debug(
-                    "Stored %d detections in _latest_detections", len(detection_dicts)
-                )
-
-                # Extract plate texts for tracking
-                detected_plate_texts = [det.text for det in valid_detections]
-
-                # Update plate tracker (check for arrivals/departures)
-                if self._plate_tracker:
-                    # Use captured_at from result, or current time if not available
-                    detected_at = result.captured_at
-                    if detected_at is None:
-                        detected_at = datetime.now(UTC)
-                    self._plate_tracker.update(
-                        detected_plate_texts,
-                        detected_at=detected_at,
-                    )
-
-                for det in valid_detections:
-                    logger.info(
-                        "Plate detected: %s (confidence: %.2f)",
-                        det.text,
-                        det.raw_ocr_confidence or 0.0,
-                    )
+                self._store_detections_and_update_tracker(valid_detections, result)
             else:
-                # Clear detections if none found
-                logger.debug("No detections found, clearing _latest_detections")
-                with self._detections_lock:
-                    self._latest_detections = []
-
-                # Update tracker with empty detection (check for departures)
-                if self._plate_tracker:
-                    detected_at = result.captured_at or datetime.now(UTC)
-                    self._plate_tracker.update([], detected_at=detected_at)
-
+                self._clear_detections_and_update_tracker(result)
         except Exception as e:
-            # Don't crash the polling loop on detection errors
             logger.error("Plate detection error: %s", e, exc_info=True)
-            # Clear detections on error
             with self._detections_lock:
                 self._latest_detections = []
 

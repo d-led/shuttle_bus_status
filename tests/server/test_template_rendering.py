@@ -281,7 +281,7 @@ def test_render_detection_without_confidence() -> None:
 
 
 def test_render_detection_with_none_text() -> None:
-    """Given a detection with None text, when rendering, then shows Unknown."""
+    """Given a detection with None text, _build_template_assigns filters it out."""
     view_class = _create_test_view()
     view = view_class()
 
@@ -306,10 +306,10 @@ def test_render_detection_with_none_text() -> None:
     }
 
     assigns = view._build_template_assigns(template_data)
+    assert assigns["latest_detections"] == []
     template = _load_template()
     result = template.render(**assigns)
-
-    assert "Unknown" in result
+    assert "No plates detected yet" in result
 
 
 def test_render_camera_connected_shows_frame() -> None:

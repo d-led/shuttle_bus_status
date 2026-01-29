@@ -254,8 +254,6 @@ def main() -> None:
     try:
         server.run()
     except KeyboardInterrupt:
-        import logging
-
         logger = logging.getLogger("uvicorn.error")
         logger.info("Keyboard interrupt received, shutting down...")
         sys.exit(0)

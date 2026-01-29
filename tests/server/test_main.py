@@ -89,13 +89,16 @@ def test_create_app_mounts_static_assets() -> None:
     assert "/static/assets/app.js" in route_paths
 
 
-@patch("server.main.uvicorn.run")
+@patch("server.main.uvicorn.Server")
 @patch("server.main.Settings.load_from_project_root")
 def test_main_loads_server_config(
-    mock_load_settings: MagicMock, mock_run: MagicMock
+    mock_load_settings: MagicMock,
+    mock_server_class: MagicMock,
 ) -> None:
     """Test that main uses server config from settings."""
-    # Create mock settings
+    mock_server = MagicMock()
+    mock_server_class.return_value = mock_server
+
     mock_settings = MagicMock()
     mock_settings.server.host = "127.0.0.1"
     mock_settings.server.port = 9000
@@ -104,25 +107,29 @@ def test_main_loads_server_config(
 
     main()
 
-    # Verify settings were loaded
     mock_load_settings.assert_called_once()
+    mock_server_class.assert_called_once()
+    config = mock_server_class.call_args[0][0]
+    assert config.host == "127.0.0.1"
+    assert config.port == 9000
+    assert config.log_level == "debug"
+    mock_server.run.assert_called_once()
 
-    # Verify uvicorn.run was called with correct parameters
-    mock_run.assert_called_once()
-    call_args = mock_run.call_args
-    assert call_args[1]["host"] == "127.0.0.1"
-    assert call_args[1]["port"] == 9000
-    assert call_args[1]["log_level"] == "debug"
 
-
-@patch("server.main.uvicorn.run")
+@patch("sys.exit")
+@patch("server.main.uvicorn.Server")
 @patch("server.main.load_raw_config_from_project_root")
 @patch("server.main.Settings.load_from_project_root")
 def test_main_camera_loads_server_config(
-    mock_load_settings: MagicMock, mock_load_raw: MagicMock, mock_run: MagicMock
+    mock_load_settings: MagicMock,
+    mock_load_raw: MagicMock,
+    mock_server_class: MagicMock,
+    mock_sys_exit: MagicMock,
 ) -> None:
     """Test that main_camera uses server config from settings."""
-    # Create mock settings
+    mock_server = MagicMock()
+    mock_server_class.return_value = mock_server
+
     mock_settings = MagicMock()
     mock_settings.server.host = "0.0.0.0"
     mock_settings.server.port = 8080
@@ -132,24 +139,29 @@ def test_main_camera_loads_server_config(
 
     main_camera()
 
-    # Verify settings were loaded
     mock_load_settings.assert_called_once()
+    mock_server_class.assert_called_once()
+    config = mock_server_class.call_args[0][0]
+    assert config.host == "0.0.0.0"
+    assert config.port == 8080
+    assert config.log_level == "info"
+    mock_server.run.assert_called_once()
 
-    # Verify uvicorn.run was called with server config
-    mock_run.assert_called_once()
-    call_args = mock_run.call_args
-    assert call_args[1]["host"] == "0.0.0.0"
-    assert call_args[1]["port"] == 8080
-    assert call_args[1]["log_level"] == "info"
 
-
-@patch("server.main.uvicorn.run")
+@patch("sys.exit")
+@patch("server.main.uvicorn.Server")
 @patch("server.main.load_raw_config_from_project_root")
 @patch("server.main.Settings.load_from_project_root")
 def test_main_camera_uses_debug_log_level_when_enabled(
-    mock_load_settings: MagicMock, mock_load_raw: MagicMock, mock_run: MagicMock
+    mock_load_settings: MagicMock,
+    mock_load_raw: MagicMock,
+    mock_server_class: MagicMock,
+    mock_sys_exit: MagicMock,
 ) -> None:
     """Test that main_camera uses debug log level when debug is enabled."""
+    mock_server = MagicMock()
+    mock_server_class.return_value = mock_server
+
     mock_settings = MagicMock()
     mock_settings.server.host = "0.0.0.0"
     mock_settings.server.port = 8000
@@ -159,5 +171,5 @@ def test_main_camera_uses_debug_log_level_when_enabled(
 
     main_camera()
 
-    call_args = mock_run.call_args
-    assert call_args[1]["log_level"] == "debug"
+    config = mock_server_class.call_args[0][0]
+    assert config.log_level == "debug"

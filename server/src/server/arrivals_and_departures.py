@@ -75,6 +75,60 @@ class ArrivalsAndDepartures:
         # Map: plate_text -> PlateState
         self._plates: dict[str, PlateState] = {}
 
+    def _record_detection(
+        self, plate_text: str, detected_at: datetime
+    ) -> ArrivalEvent | None:
+        """Record a detection and return an arrival event if plate just arrived."""
+        if plate_text not in self._plates:
+            self._plates[plate_text] = PlateState()
+        state = self._plates[plate_text]
+        state.detections.append(detected_at)
+        state.last_seen = detected_at
+        window_start = detected_at.timestamp() - self._appearance_window_seconds
+        state.detections = [
+            dt for dt in state.detections if dt.timestamp() >= window_start
+        ]
+        if (
+            not state.has_arrived
+            and len(state.detections) >= self._appearance_min_count
+        ):
+            state.has_arrived = True
+            state.arrived_at = detected_at
+            return ArrivalEvent(plate_text=plate_text, arrived_at=detected_at)
+        return None
+
+    def _collect_departures(
+        self, detected_set: set[str], detected_at: datetime
+    ) -> list[DepartureEvent]:
+        """Find plates that have been absent long enough and return departure events."""
+        now = detected_at.timestamp()
+        events: list[DepartureEvent] = []
+        to_remove: list[str] = []
+        for plate_text, state in self._plates.items():
+            if not state.has_arrived or plate_text in detected_set:
+                continue
+            if state.last_seen is None:
+                continue
+            time_since_last_seen = now - state.last_seen.timestamp()
+            if time_since_last_seen < self._disappearance_timeout_seconds:
+                continue
+            duration_seconds = (
+                (detected_at - state.arrived_at).total_seconds()
+                if state.arrived_at
+                else 0.0
+            )
+            events.append(
+                DepartureEvent(
+                    plate_text=plate_text,
+                    departed_at=detected_at,
+                    duration_seconds=duration_seconds,
+                )
+            )
+            to_remove.append(plate_text)
+        for plate_text in to_remove:
+            del self._plates[plate_text]
+        return events
+
     def update(
         self,
         detected_plates: list[str],
@@ -91,74 +145,15 @@ class ArrivalsAndDepartures:
         """
         if detected_at is None:
             detected_at = datetime.now(UTC)
-
-        # Normalize plate texts (handle None/empty)
-        detected_plates = [p for p in detected_plates if p and p.strip()]
-        detected_set = set(detected_plates)
+        detected_set = {p for p in detected_plates if p and p.strip()}
 
         arrival_events: list[ArrivalEvent] = []
-        departure_events: list[DepartureEvent] = []
-
-        # Update detection timestamps for detected plates
         for plate_text in detected_set:
-            if plate_text not in self._plates:
-                self._plates[plate_text] = PlateState()
+            event = self._record_detection(plate_text, detected_at)
+            if event is not None:
+                arrival_events.append(event)
 
-            state = self._plates[plate_text]
-            state.detections.append(detected_at)
-            state.last_seen = detected_at
-
-            # Keep only recent detections (within appearance window)
-            window_start = detected_at.timestamp() - self._appearance_window_seconds
-            state.detections = [
-                dt for dt in state.detections if dt.timestamp() >= window_start
-            ]
-
-            # Check if plate should "arrive" (meet appearance threshold)
-            if (
-                not state.has_arrived
-                and len(state.detections) >= self._appearance_min_count
-            ):
-                state.has_arrived = True
-                state.arrived_at = detected_at
-                arrival_events.append(
-                    ArrivalEvent(plate_text=plate_text, arrived_at=detected_at)
-                )
-
-        # Check for departures (plates that were present but not detected)
-        now = detected_at.timestamp()
-
-        for plate_text, state in list(self._plates.items()):
-            if not state.has_arrived:
-                continue  # Skip plates that never arrived
-
-            if plate_text not in detected_set:
-                # Plate not detected in this frame
-                if state.last_seen is None:
-                    # Shouldn't happen, but handle gracefully
-                    continue
-
-                # Check if plate has been absent long enough to depart
-                time_since_last_seen = now - state.last_seen.timestamp()
-                if time_since_last_seen >= self._disappearance_timeout_seconds:
-                    # Plate has departed
-                    duration_seconds = 0.0
-                    if state.arrived_at:
-                        duration_seconds = (
-                            detected_at - state.arrived_at
-                        ).total_seconds()
-
-                    departure_events.append(
-                        DepartureEvent(
-                            plate_text=plate_text,
-                            departed_at=detected_at,
-                            duration_seconds=duration_seconds,
-                        )
-                    )
-
-                    # Remove from tracking (plate has left)
-                    del self._plates[plate_text]
-
+        departure_events = self._collect_departures(detected_set, detected_at)
         return (arrival_events, departure_events)
 
     def get_present_plates(self) -> dict[str, PlateState]:

@@ -262,7 +262,12 @@ class TestTemplateParsing:
         assert "ABC 123" in result or "Raw:" in result
 
     def test_template_with_detection_no_text(self) -> None:
-        """Test that the template handles detection with None text."""
+        """Test that the template handles detection with None text without error.
+
+        In production, _build_template_assigns filters out detections with no text,
+        so "Unknown" is never shown. When passing such a detection directly to the
+        template, it should still render without error.
+        """
         template = self._load_template()
         assigns = self._create_minimal_template_assigns()
 
@@ -274,11 +279,9 @@ class TestTemplateParsing:
 
         assigns["latest_detections"] = [detection]
 
-        # Should render without errors (shows "Unknown")
         result = template.render(**assigns)
         assert result is not None
         assert isinstance(result, str)
-        assert "Unknown" in result
 
     def test_build_template_assigns_includes_required_keys(self) -> None:
         """Test that _build_template_assigns includes all required keys."""
