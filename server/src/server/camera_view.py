@@ -85,6 +85,27 @@ class LiveViewConfiguration:
     display_config: DisplayConfiguration
 
 
+def _process_detections_for_template(
+    latest_detections: list[Any],
+) -> list[dict[str, Any]]:
+    """Filter detections and add confidence_percent for template. Skips non-dict or empty text."""
+    processed: list[dict[str, Any]] = []
+    for det in latest_detections:
+        if not isinstance(det, dict):
+            continue
+        det_text = det.get("text")
+        if not det_text or det_text is None:
+            continue
+        processed_item = dict(det)
+        raw_conf = det.get("raw_ocr_confidence")
+        if isinstance(raw_conf, (int, float)) and raw_conf is not None:
+            processed_item["confidence_percent"] = round(raw_conf * 100)
+        else:
+            processed_item["confidence_percent"] = None
+        processed.append(processed_item)
+    return processed
+
+
 def _stringify_config_value(value: object) -> str:
     if isinstance(value, list):
         return ", ".join(str(v) for v in value)
@@ -248,57 +269,36 @@ class CameraLiveView(LiveView[dict[str, Any]]):
         return LiveTemplate(template)
 
     def _build_template_assigns(self, context: dict[str, Any]) -> dict[str, Any]:
-        title = self._config.route_display.title or "Shuttle Bus Status"
-        status = str(context.get("status", "ready"))
-        camera_connected = bool(context.get("camera_connected", False))
+        deps = self._config.dependencies
         feedback_lines = context.get("feedback_lines")
         if not isinstance(feedback_lines, list):
-            feedback_lines = list(self._config.dependencies.feedback_lines)
+            feedback_lines = list(deps.feedback_lines)
         config_sections = context.get("config_sections")
         if not isinstance(config_sections, list):
-            config_sections = _group_config_rows(self._config.dependencies.config_rows)
+            config_sections = _group_config_rows(deps.config_rows)
         camera_device = context.get("camera_device")
         if not isinstance(camera_device, str):
-            camera_device = self._config.dependencies.camera_device
+            camera_device = deps.camera_device
         camera_device_options = context.get("camera_device_options")
         if not isinstance(camera_device_options, list):
-            camera_device_options = self._config.dependencies.camera_device_options
+            camera_device_options = deps.camera_device_options
 
         latest_detections = context.get("latest_detections")
         if not isinstance(latest_detections, list):
             latest_detections = []
 
-        # Pre-process detections to add computed fields for template
-        # Filter out any detections with None or empty text (shouldn't happen, but be safe)
-        processed_detections = []
-        for det in latest_detections:
-            if not isinstance(det, dict):
-                continue
-            # Skip detections with no text
-            det_text = det.get("text")
-            if not det_text or det_text is None:
-                continue
-            processed = dict(det)
-            # Calculate confidence percentage for template
-            raw_conf = det.get("raw_ocr_confidence")
-            if isinstance(raw_conf, (int, float)) and raw_conf is not None:
-                processed["confidence_percent"] = round(raw_conf * 100)
-            else:
-                processed["confidence_percent"] = None
-            processed_detections.append(processed)
-
         return {
-            "title": title,
-            "status": status,
-            "camera_connected": camera_connected,
+            "title": self._config.route_display.title or "Shuttle Bus Status",
+            "status": str(context.get("status", "ready")),
+            "camera_connected": bool(context.get("camera_connected", False)),
             "plates_detected": int(context.get("plates_detected", 0)),
             "camera_frame_b64": context.get("camera_frame_b64"),
             "camera_device": camera_device,
             "camera_device_options": camera_device_options,
-            "server_bind": self._config.dependencies.server_bind,
+            "server_bind": deps.server_bind,
             "feedback_lines": list(feedback_lines),
             "config_sections": config_sections,
-            "latest_detections": processed_detections,
+            "latest_detections": _process_detections_for_template(latest_detections),
         }
 
     async def mount(self, socket: LiveViewSocket[dict[str, Any]], session: Any) -> None:

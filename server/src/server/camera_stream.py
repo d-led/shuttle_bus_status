@@ -57,6 +57,27 @@ class CameraStreamConfig:
     test_max_duration_s: float = 15.0
 
 
+def _resolve_auto_device() -> str:
+    """Resolve 'auto' to a real camera or test device. Prefers real hardware."""
+    if sys.platform == "darwin":
+        candidates = _darwin_camera_device_candidates()
+        return candidates[0] if candidates else "avfoundation:0"
+
+    candidates = _linux_camera_device_candidates()
+    if candidates:
+        return candidates[0]
+
+    test_camera_dir = Path("data/test_camera")
+    if test_camera_dir.exists() and _has_images(test_camera_dir):
+        logger.warning(
+            "No real camera found, falling back to test camera device: %s",
+            test_camera_dir,
+        )
+        return f"test:{test_camera_dir}"
+
+    return "/dev/video0"
+
+
 def resolve_device(raw_camera_device: str) -> str:
     """Resolve a configured device string into an OpenCV-usable selector.
 
@@ -64,52 +85,35 @@ def resolve_device(raw_camera_device: str) -> str:
     - "test:<directory>" -> Test camera device using images from directory
     - "auto" -> Auto-detect real camera (prefers real hardware over test device)
     - Otherwise -> Use as-is
-
-    For "auto", we prioritize real cameras. Test device is only used if no real
-    camera is available.
     """
     if raw_camera_device.startswith("test:"):
-        # Test device format: "test:/path/to/images"
         return raw_camera_device
-
     if raw_camera_device != "auto":
         return raw_camera_device
+    return _resolve_auto_device()
 
-    # For "auto", try to find a real camera first
-    if sys.platform == "darwin":
-        # On macOS, try AVFoundation devices
-        # Check if we can list devices (indicates camera access/permission)
-        candidates = _darwin_camera_device_candidates()
-        if candidates:
-            # Return first real camera device
-            return candidates[0]
-        # Fallback to default if no devices found
-        return "avfoundation:0"
 
-    # On Linux/RPi, check for V4L2 devices
-    devices = sorted(glob.glob("/dev/video*"))
-    if devices:
-        # Prefer camera-like devices over generic video devices
-        candidates = _linux_camera_device_candidates()
-        if candidates:
-            return candidates[0]
-        # Fallback to first /dev/video* if no camera-like devices found
-        return devices[0]
+def _has_images(dir_path: Path) -> bool:
+    """Return True if directory contains jpg or png images."""
+    return bool(
+        any(dir_path.glob("*.[jJ][pP][gG]")) or any(dir_path.glob("*.[pP][nN][gG]"))
+    )
 
-    # No real camera found - fallback to test device if available
+
+def _test_device_candidates() -> list[str]:
+    """Return test device candidates (test:path) for UI selection."""
+    out: list[str] = []
     test_camera_dir = Path("data/test_camera")
-    if test_camera_dir.exists() and (
-        any(test_camera_dir.glob("*.[jJ][pP][gG]"))
-        or any(test_camera_dir.glob("*.[pP][nN][gG]"))
-    ):
-        logger.warning(
-            "No real camera found, falling back to test camera device: %s",
-            test_camera_dir,
-        )
-        return f"test:{test_camera_dir}"
-
-    # Last resort: return default (may not work, but at least we tried)
-    return "/dev/video0"
+    if test_camera_dir.exists() and _has_images(test_camera_dir):
+        out.append(f"test:{test_camera_dir}")
+    test_dataset = Path("data/test_images/german_plates")
+    if test_dataset.exists():
+        for subdir in ["kaggle", "roboflow"]:
+            test_dir = test_dataset / subdir
+            if test_dir.exists():
+                out.append(f"test:{test_dir}")
+                break
+    return out
 
 
 def list_camera_device_candidates() -> list[str]:
@@ -124,32 +128,11 @@ def list_camera_device_candidates() -> list[str]:
     Note: Test devices are listed FIRST for easy UI selection, but "auto" will prefer
     real cameras when resolving.
     """
-    candidates: list[str] = []
-
-    # Add test device options FIRST (for easy UI selection)
-    # Priority: self-contained test dataset first, then full datasets
-    test_camera_dir = Path("data/test_camera")
-    if test_camera_dir.exists() and (
-        any(test_camera_dir.glob("*.[jJ][pP][gG]"))
-        or any(test_camera_dir.glob("*.[pP][nN][gG]"))
-    ):
-        candidates.append(f"test:{test_camera_dir}")
-
-    # Also add full dataset options if they exist
-    test_dataset = Path("data/test_images/german_plates")
-    if test_dataset.exists():
-        # Check for kaggle or roboflow subdirectories
-        for subdir in ["kaggle", "roboflow"]:
-            test_dir = test_dataset / subdir
-            if test_dir.exists():
-                candidates.append(f"test:{test_dir}")
-                break  # Only add one full dataset option
-
+    candidates = _test_device_candidates()
     if sys.platform == "darwin":
         candidates.extend(_darwin_camera_device_candidates())
     else:
         candidates.extend(_linux_camera_device_candidates())
-
     return candidates
 
 
@@ -319,6 +302,68 @@ def _v4l2_device_names_from_v4l2ctl() -> dict[str, str]:
         if dev.startswith("/dev/video"):
             mapping[dev] = current_name
     return mapping
+
+
+def _detect_slow_log_entry(
+    detect_time: float,
+) -> tuple[int, str, tuple[float, ...]] | None:
+    """Return (log_level, message, args) if detect_time is above thresholds, else None."""
+    if detect_time > 10.0:
+        return (
+            logging.ERROR,
+            "Plate detection took %.2fs total - TOO SLOW! "
+            "Check logs for YOLO/OCR breakdown. "
+            "SOLUTION: Set preprocess=false in config.toml and/or use faster OCR engine (tesseract)",
+            (detect_time,),
+        )
+    if detect_time > 5.0:
+        return (
+            logging.WARNING,
+            "Plate detection took %.2fs total. "
+            "Check debug logs for YOLO/OCR breakdown. "
+            "Consider: reducing image resolution, disabling preprocessing, or using faster OCR engine",
+            (detect_time,),
+        )
+    if detect_time > 2.0:
+        return (
+            logging.INFO,
+            "Plate detection took %.2fs total (check debug logs for YOLO/OCR breakdown)",
+            (detect_time,),
+        )
+    return None
+
+
+def _create_capture_for_device(device: str, config: CameraStreamConfig) -> Any:
+    """Create and return an open VideoCapture (or TestCameraDevice). Raises if open fails."""
+    if device.startswith("test:"):
+        from server.test_camera_device import TestCameraDevice
+
+        image_dir = Path(device.split(":", 1)[1])
+        if not image_dir.exists():
+            raise RuntimeError(f"Test camera image directory not found: {image_dir}")
+        return TestCameraDevice(
+            image_directory=image_dir,
+            min_duration_s=config.test_min_duration_s,
+            max_duration_s=config.test_max_duration_s,
+            width=config.width,
+            height=config.height,
+        )
+    if device.startswith("avfoundation:"):
+        idx = int(device.split(":", 1)[1])
+        cap = cv2.VideoCapture(idx, cv2.CAP_AVFOUNDATION)
+    else:
+        cap = cv2.VideoCapture(device)
+
+    is_opened = getattr(cap, "isOpened", None)
+    if callable(is_opened) and not cap.isOpened():
+        hint = ""
+        if sys.platform == "darwin":
+            hint = (
+                " On macOS, ensure the running process (e.g. Terminal/Cursor) "
+                "has camera permission in System Settings > Privacy & Security > Camera."
+            )
+        raise RuntimeError(f"OpenCV could not open camera device {device!r}.{hint}")
+    return cap
 
 
 class NullCameraStreamController(CameraStreamControllerProtocol):
@@ -531,59 +576,16 @@ class CameraStreamController(CameraStreamControllerProtocol):
 
         device = self._config.device
         logger.info("Opening camera device=%r", device)
-
-        # Reset connection state when opening
         self._camera_connected = False
 
-        cap: Any
-        # Handle test camera device
-        if device.startswith("test:"):
-            # Import test camera device (relative import within server package)
-            from server.test_camera_device import TestCameraDevice
-
-            image_dir = Path(device.split(":", 1)[1])
-            if not image_dir.exists():
-                raise RuntimeError(
-                    f"Test camera image directory not found: {image_dir}"
-                )
-
-            cap = TestCameraDevice(
-                image_directory=image_dir,
-                min_duration_s=self._config.test_min_duration_s,
-                max_duration_s=self._config.test_max_duration_s,
-                width=self._config.width,
-                height=self._config.height,
-            )
-        elif device.startswith("avfoundation:"):
-            idx = int(device.split(":", 1)[1])
-            cap = cv2.VideoCapture(idx, cv2.CAP_AVFOUNDATION)
-        else:
-            cap = cv2.VideoCapture(device)
-
-        # Fail fast with a helpful message (otherwise reads just return False/None).
-        is_opened = getattr(cap, "isOpened", None)
-        if callable(is_opened) and not cap.isOpened():
-            hint = ""
-            if sys.platform == "darwin":
-                hint = (
-                    " On macOS, ensure the running process (e.g. Terminal/Cursor) "
-                    "has camera permission in System Settings > Privacy & Security > Camera."
-                )
-            message = f"OpenCV could not open camera device {device!r}.{hint}"
-            logger.warning(message)
-            raise RuntimeError(message)
-
+        cap = _create_capture_for_device(device, self._config)
         if self._config.width is not None:
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, float(self._config.width))
         if self._config.height is not None:
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self._config.height))
         if self._config.capture_fps is not None:
             cap.set(cv2.CAP_PROP_FPS, float(self._config.capture_fps))
-
-        # Best-effort: keep the capture buffer small to reduce "stale frames" when sampling.
-        # Not all backends support this property, but it's safe to try.
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1.0)
-
         self._cap = cap
 
     def _close_capture(self) -> None:
@@ -602,78 +604,78 @@ class CameraStreamController(CameraStreamControllerProtocol):
                     "Camera connection state changed: disconnected (camera closed)"
                 )
 
+    def _resolve_yolo_model_path(self, project_root: Path, size_suffix: str) -> Path:
+        """Resolve YOLO model path from possible locations."""
+        possible_paths = [
+            project_root / "models" / f"yolov8{size_suffix}.pt",
+            project_root / "models" / f"best_{size_suffix}.pt",
+            project_root / "models" / "best.pt",
+            project_root / "models" / "plate_detection.pt",
+        ]
+        for path in possible_paths:
+            if path.exists():
+                return path
+        logger.warning(
+            "Model file not found in expected locations, using: %s",
+            possible_paths[0],
+        )
+        return possible_paths[0]
+
+    def _load_detection_settings(self) -> tuple[Any, Path, str]:
+        """Load camera config and return (settings, project_root, size_suffix)."""
+        from camera.config import Settings
+
+        settings = Settings.load_from_project_root()
+        project_root = Settings._find_project_root()
+        size_map = {
+            "nano": "n",
+            "small": "s",
+            "medium": "m",
+            "large": "l",
+            "xlarge": "x",
+        }
+        size_suffix = size_map.get(settings.plate_detection.model_size, "n")
+        return settings, project_root, size_suffix
+
+    def _create_detector_and_ocr(
+        self, settings: Any, project_root: Path, size_suffix: str
+    ) -> tuple[Any, Any]:
+        """Create and return (detector, ocr) from settings."""
+        from camera.plate_pipeline import (
+            UltralyticsYoloPlateDetector,
+            create_plate_recognizer_from_config,
+        )
+
+        model_path = self._resolve_yolo_model_path(project_root, size_suffix)
+        detector = UltralyticsYoloPlateDetector(
+            model_path=model_path,
+            confidence_threshold=float(settings.plate_detection.confidence_threshold),
+        )
+        rec = settings.plate_recognition
+        ocr = create_plate_recognizer_from_config(
+            ocr_engine=rec.ocr_engine,
+            languages=list(rec.languages),
+            min_confidence=float(rec.min_confidence),
+            preprocess=bool(rec.preprocess),
+            allowlist=bool(rec.allowlist),
+            allowlist_chars=str(rec.allowlist_chars),
+            normalize=bool(rec.normalize),
+        )
+        return detector, ocr
+
     def _ensure_detection_components(self) -> None:
         """Lazy initialization of plate detector and OCR."""
         if self._detector is not None and self._ocr is not None:
             return
-
         try:
-            # Import here to avoid heavy dependencies at module load time
-            from camera.config import Settings
-            from camera.plate_pipeline import (
-                UltralyticsYoloPlateDetector,
-                create_plate_recognizer_from_config,
+            settings, project_root, size_suffix = self._load_detection_settings()
+            self._detector, self._ocr = self._create_detector_and_ocr(
+                settings, project_root, size_suffix
             )
-
-            settings = Settings.load_from_project_root()
-
-            # Construct model path from model_size
-            # Standard YOLOv8 naming: yolov8n.pt, yolov8s.pt, etc.
-            size_map = {
-                "nano": "n",
-                "small": "s",
-                "medium": "m",
-                "large": "l",
-                "xlarge": "x",
-            }
-            size_suffix = size_map.get(settings.plate_detection.model_size, "n")
-
-            # Try multiple possible model locations
-            project_root = Settings._find_project_root()
-            possible_paths = [
-                project_root / "models" / f"yolov8{size_suffix}.pt",
-                project_root / "models" / f"best_{size_suffix}.pt",
-                project_root / "models" / "best.pt",
-                project_root / "models" / "plate_detection.pt",
-            ]
-
-            model_path = None
-            for path in possible_paths:
-                if path.exists():
-                    model_path = path
-                    break
-
-            if model_path is None:
-                # Use first path as default (will fail with helpful error if model doesn't exist)
-                model_path = possible_paths[0]
-                logger.warning(
-                    "Model file not found in expected locations, using: %s",
-                    model_path,
-                )
-
-            # Create detector
-            self._detector = UltralyticsYoloPlateDetector(
-                model_path=model_path,
-                confidence_threshold=float(
-                    settings.plate_detection.confidence_threshold
-                ),
-            )
-
-            # Create OCR
             rec = settings.plate_recognition
-            self._ocr = create_plate_recognizer_from_config(
-                ocr_engine=rec.ocr_engine,
-                languages=list(rec.languages),
-                min_confidence=float(rec.min_confidence),
-                preprocess=bool(rec.preprocess),
-                allowlist=bool(rec.allowlist),
-                allowlist_chars=str(rec.allowlist_chars),
-                normalize=bool(rec.normalize),
-            )
-
             logger.info(
                 "Plate detection components initialized (model=%s, ocr_engine=%s, preprocess=%s)",
-                model_path,
+                self._resolve_yolo_model_path(project_root, size_suffix),
                 rec.ocr_engine,
                 rec.preprocess,
             )
@@ -681,7 +683,20 @@ class CameraStreamController(CameraStreamControllerProtocol):
             logger.error(
                 "Failed to initialize plate detection components: %s", e, exc_info=True
             )
-            # Don't crash - just log error and continue without detection
+
+    async def _notify_sockets_with_detections(
+        self, latest_detections: list[dict[str, object]]
+    ) -> None:
+        """Update all connected sockets with latest detections and send update event."""
+        logger.debug(
+            "After detection: updating UI with %d detections",
+            len(latest_detections),
+        )
+        sockets = await self._snapshot_sockets()
+        for sock in sockets:
+            sock.context["latest_detections"] = latest_detections
+            sock.context["plates_detected"] = len(latest_detections)
+            await sock.send_info(InfoEvent("update", "update"))
 
     async def _run_plate_detection_async(self) -> None:
         """Run plate detection on the current frame in a background thread (non-blocking)."""
@@ -690,35 +705,14 @@ class CameraStreamController(CameraStreamControllerProtocol):
 
         self._detection_running = True
         try:
-            # Run detection in thread pool to avoid blocking async loop
-            # This allows UI to continue updating while detection runs
             await asyncio.to_thread(self._run_plate_detection_sync)
-
-            # Trigger UI update after detection completes
-            # (detections are already stored in _latest_detections by _run_plate_detection_sync)
-            # Get latest detections and update socket context
-            # Note: Don't pass frame_b64 here (None) - we don't want to update the frame,
-            # just the detections. The frame will be updated in the next _tick().
             with self._detections_lock:
                 latest_detections = list(self._latest_detections)
-            logger.debug(
-                "After detection: updating UI with %d detections",
-                len(latest_detections),
-            )
-            sockets = await self._snapshot_sockets()
-            for sock in sockets:
-                # Update socket context with latest detections (but don't change frame or connection status)
-                if latest_detections is not None:
-                    sock.context["latest_detections"] = latest_detections
-                    sock.context["plates_detected"] = len(latest_detections)
-                    # Only send update if we have detections to show (avoid unnecessary updates)
-                    await sock.send_info(InfoEvent("update", "update"))
+            await self._notify_sockets_with_detections(latest_detections)
         except asyncio.CancelledError:
-            # Task was cancelled (shutdown) - this is expected
             logger.debug("Plate detection task cancelled")
             raise
         except Exception as e:
-            # Don't crash the polling loop on detection errors
             logger.error("Plate detection error: %s", e, exc_info=True)
         finally:
             self._detection_running = False
@@ -753,25 +747,10 @@ class CameraStreamController(CameraStreamControllerProtocol):
 
     def _log_detect_time_if_slow(self, detect_time: float) -> None:
         """Log plate detection duration if above thresholds."""
-        if detect_time > 10.0:
-            logger.error(
-                "Plate detection took %.2fs total - TOO SLOW! "
-                "Check logs for YOLO/OCR breakdown. "
-                "SOLUTION: Set preprocess=false in config.toml and/or use faster OCR engine (tesseract)",
-                detect_time,
-            )
-        elif detect_time > 5.0:
-            logger.warning(
-                "Plate detection took %.2fs total. "
-                "Check debug logs for YOLO/OCR breakdown. "
-                "Consider: reducing image resolution, disabling preprocessing, or using faster OCR engine",
-                detect_time,
-            )
-        elif detect_time > 2.0:
-            logger.info(
-                "Plate detection took %.2fs total (check debug logs for YOLO/OCR breakdown)",
-                detect_time,
-            )
+        entry = _detect_slow_log_entry(detect_time)
+        if entry is not None:
+            level, msg, args = entry
+            logger.log(level, msg, *args)
 
     def _store_detections_and_update_tracker(
         self,
@@ -807,6 +786,45 @@ class CameraStreamController(CameraStreamControllerProtocol):
             detected_at = result.captured_at or datetime.now(UTC)
             self._plate_tracker.update([], detected_at=detected_at)
 
+    def _get_frame_for_detection(self) -> Any | None:
+        """Get current frame for detection (thread-safe copy). Returns None if unavailable."""
+        if self._detector is None or self._ocr is None:
+            return None
+        with self._detections_lock:
+            if self._current_frame_bgr is None:
+                return None
+            return self._current_frame_bgr.copy()
+
+    def _run_detection_on_frame(self, frame: Any) -> None:
+        """Run plate detection on frame and update _latest_detections and tracker."""
+        from camera.plate_pipeline import detect_plates_in_image
+
+        assert self._detector is not None
+        assert self._ocr is not None
+        logger.debug("Running detection on frame: shape=%s", frame.shape)
+        detect_start = time.perf_counter()
+        result = detect_plates_in_image(
+            image_bgr=frame,
+            detector=self._detector,
+            ocr=self._ocr,
+            include_crops=False,
+        )
+        self._log_detect_time_if_slow(time.perf_counter() - detect_start)
+
+        if result is None:
+            logger.error(
+                "detect_plates_in_image returned None - this should not happen"
+            )
+            with self._detections_lock:
+                self._latest_detections = []
+            return
+
+        valid_detections = [det for det in result.detections if det.text is not None]
+        if valid_detections:
+            self._store_detections_and_update_tracker(valid_detections, result)
+        else:
+            self._clear_detections_and_update_tracker(result)
+
     def _run_plate_detection_sync(self) -> None:
         """Run plate detection on the current frame synchronously (blocking call).
 
@@ -820,46 +838,12 @@ class CameraStreamController(CameraStreamControllerProtocol):
             self._ensure_plate_tracker()
             self._log_init_time_if_slow(time.perf_counter() - init_start)
 
-            if self._detector is None or self._ocr is None:
-                return
-            with self._detections_lock:
-                frame = (
-                    self._current_frame_bgr.copy()
-                    if self._current_frame_bgr is not None
-                    else None
-                )
+            frame = self._get_frame_for_detection()
             if frame is None:
                 logger.warning("_run_plate_detection_sync: No frame available")
                 return
 
-            logger.debug("Running detection on frame: shape=%s", frame.shape)
-            from camera.plate_pipeline import detect_plates_in_image
-
-            detect_start = time.perf_counter()
-            result = detect_plates_in_image(
-                image_bgr=frame,
-                detector=self._detector,
-                ocr=self._ocr,
-                include_crops=False,
-            )
-            detect_time = time.perf_counter() - detect_start
-
-            if result is None:
-                logger.error(
-                    "detect_plates_in_image returned None - this should not happen"
-                )
-                with self._detections_lock:
-                    self._latest_detections = []
-                return
-
-            self._log_detect_time_if_slow(detect_time)
-            valid_detections = [
-                det for det in result.detections if det.text is not None
-            ]
-            if valid_detections:
-                self._store_detections_and_update_tracker(valid_detections, result)
-            else:
-                self._clear_detections_and_update_tracker(result)
+            self._run_detection_on_frame(frame)
         except Exception as e:
             logger.error("Plate detection error: %s", e, exc_info=True)
             with self._detections_lock:
