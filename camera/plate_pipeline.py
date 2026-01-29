@@ -13,7 +13,7 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, cast
 
 import cv2
 import numpy as np
@@ -617,7 +617,7 @@ def _remove_vignette_characters(text: str) -> str:
     # This handles both: "LIP E AS277" and "L1P BAS277" (B at start of word)
     parts = text.split()
     if len(parts) >= 2:
-        result_parts = []
+        result_parts: list[str] = []
         i = 0
         while i < len(parts):
             # Case 1: Single vignette char between two longer parts: "LIP E AS277"
@@ -655,7 +655,7 @@ def _remove_vignette_characters(text: str) -> str:
     # Step 3: Handle single vignette chars without spaces (more aggressive)
     # Use regex but be smarter - only remove if character is clearly in middle
     # e.g., "LIPBAS277" -> "LIPAS277" (remove B)
-    def remove_vignette(match):
+    def remove_vignette(match: re.Match[str]) -> str:
         prefix = match.group(1)
         single_char = match.group(2)
         suffix = match.group(3)
@@ -939,7 +939,7 @@ def _preprocess_plate_strategy_flatten(plate_bgr: np.ndarray) -> np.ndarray:
     flattened = cv2.subtract(denoised, background)
 
     # Normalize to full dynamic range
-    flattened = cv2.normalize(flattened, None, 0, 255, cv2.NORM_MINMAX)
+    flattened = cv2.normalize(flattened, None, 0.0, 255.0, cv2.NORM_MINMAX)  # type: ignore[call-overload]
 
     # Apply CLAHE for contrast enhancement (more aggressive for small crops)
     clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8, 8))
@@ -1037,7 +1037,7 @@ def _preprocess_plate_strategy_smooth_sharpen(plate_bgr: np.ndarray) -> np.ndarr
     enhanced = clahe.apply(sharpened)
 
     # Step 6: Normalize to full dynamic range
-    normalized = cv2.normalize(enhanced, None, 0, 255, cv2.NORM_MINMAX)
+    normalized = cv2.normalize(enhanced, None, 0.0, 255.0, cv2.NORM_MINMAX)  # type: ignore[call-overload]
 
     # Step 7: Adaptive thresholding optimized for edge clarity
     # Block size based on image size (smaller for better edge detection)
@@ -1135,7 +1135,7 @@ def _preprocess_plate_strategy_remove_vignette(plate_bgr: np.ndarray) -> np.ndar
         if x_center_dist < 0.3 and y_center_dist < 0.4:
             # This looks like a vignette - mask it out
             cv2.drawContours(
-                mask, [contour], -1, 0, -1
+                mask, [contour], -1, (0.0,), -1
             )  # Fill with black (will be replaced)
 
     # Apply mask: replace vignette regions with background color (light gray/white)
@@ -1228,8 +1228,13 @@ def detect_plates_in_image(
     candidates = detector.detect(image_bgr)
     yolo_time = time.perf_counter() - yolo_start
 
+    import logging
+
+    logger = logging.getLogger(__name__)
+    logger.info("YOLO detected %d candidates in %.3fs", len(candidates), yolo_time)
+
     # Time OCR (will be measured inside detect_plates_from_candidates)
-    result = detect_plates_from_candidates(
+    return detect_plates_from_candidates(
         image_bgr=image_bgr,
         candidates=candidates,
         ocr=ocr,
@@ -1407,7 +1412,7 @@ class PaddleOcrPlateRecognizer:
         os.environ["DISABLE_MODEL_SOURCE_CHECK"] = "True"
 
         try:
-            from paddleocr import PaddleOCR  # type: ignore[import-untyped]
+            from paddleocr import PaddleOCR
         except ImportError:
             if original_disable is None:
                 os.environ.pop("DISABLE_MODEL_SOURCE_CHECK", None)
@@ -1549,7 +1554,7 @@ class TesseractOcrPlateRecognizer:
         normalize: bool = False,
     ) -> None:
         try:
-            import pytesseract  # type: ignore[import-untyped]
+            import pytesseract
         except ImportError as e:
             raise ImportError(
                 "pytesseract not installed. Install with: pip install pytesseract. "
@@ -1690,7 +1695,7 @@ class DotsOcrPlateRecognizer:
         normalize: bool = False,
     ) -> None:
         try:
-            from dots_ocr import DotsOCRParser  # type: ignore[import-untyped]
+            from dots_ocr import DotsOCRParser  # type: ignore[import-not-found]
         except ImportError as err:
             raise ImportError(
                 "dots.ocr not installed. Install with: pip install dots-ocr"
@@ -1812,7 +1817,7 @@ class ChandraOcrPlateRecognizer:
         normalize: bool = False,
     ) -> None:
         try:
-            from chandra.model import InferenceManager  # type: ignore[import-untyped]
+            from chandra.model import InferenceManager  # type: ignore[import-not-found]
         except ImportError as err:
             raise ImportError(
                 "chandra-ocr not installed. Install with: pip install chandra-ocr"
@@ -2052,7 +2057,7 @@ class EnsemblePlateRecognizer:
         scored_results: list[tuple[dict[str, object], float]] = []
 
         for result in all_results:
-            text = result.get("text")
+            text = cast("str | None", result.get("text"))
             if not text:
                 continue
 
@@ -2066,10 +2071,13 @@ class EnsemblePlateRecognizer:
         scored_results.sort(key=lambda x: x[1], reverse=True)
         best_result, best_score = scored_results[0]
 
-        best_text = best_result["text"]
-        best_conf = best_result.get("confidence", 0.7)  # Default confidence if missing
+        best_text: str | None = cast("str | None", best_result.get("text"))
+        best_conf = cast(
+            "float", best_result.get("confidence", 0.7)
+        )  # Default confidence if missing
+        best_meta_base = best_result.get("meta", {})
         best_meta = {
-            **best_result.get("meta", {}),
+            **cast("dict[str, object]", best_meta_base),
             "ensemble_engine": best_result["engine"],
             "ensemble_score": best_score,
             "ensemble_results": all_results,
@@ -2086,9 +2094,9 @@ class EnsemblePlateRecognizer:
     ) -> float:
         """Score a result based on multiple factors to determine the 'best bet'."""
         score = 0.0
-        text = result.get("text", "")
-        conf = result.get("confidence")
-        engine = result.get("engine", "")
+        text = cast("str", result.get("text", ""))
+        conf = cast("float | None", result.get("confidence"))
+        engine = cast("str", result.get("engine", ""))
 
         # Factor 1: Confidence score (0-1, weighted 40%)
         if conf is not None:
@@ -2132,15 +2140,14 @@ class EnsemblePlateRecognizer:
             quality += 0.1
 
         # Prefer alphanumeric content (license plates are alphanumeric)
-        alnum_ratio = sum(1 for c in text if c.isalnum()) / len(text) if text else 0
+        alnum_count = sum(1 for c in text if c.isalnum())
+        alnum_ratio = alnum_count / len(text) if text else 0.0
         quality += alnum_ratio * 0.2
 
         # Prefer uppercase (German plates are uppercase)
-        upper_ratio = (
-            sum(1 for c in text if c.isupper()) / sum(1 for c in text if c.isalpha())
-            if any(c.isalpha() for c in text)
-            else 0
-        )
+        alpha_count = sum(1 for c in text if c.isalpha())
+        upper_count = sum(1 for c in text if c.isupper())
+        upper_ratio = (upper_count / alpha_count) if alpha_count else 0.0
         quality += upper_ratio * 0.1
 
         return min(1.0, quality)
@@ -2149,14 +2156,14 @@ class EnsemblePlateRecognizer:
         self, result: dict[str, object], all_results: list[dict[str, object]]
     ) -> float:
         """Calculate how much other engines agree with this result."""
-        text = result.get("text", "")
+        text = cast("str", result.get("text", ""))
         if not text:
             return 0.0
 
         # Normalize text for comparison
         normalized = _normalize_plate_text(text)
 
-        matches = 0
+        matches = 0.0
         total = 0
 
         for other in all_results:
@@ -2165,7 +2172,7 @@ class EnsemblePlateRecognizer:
                 continue
 
             total += 1
-            other_normalized = _normalize_plate_text(other_text)
+            other_normalized = _normalize_plate_text(cast("str", other_text))
 
             # Exact match
             if normalized == other_normalized:

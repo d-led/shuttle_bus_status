@@ -243,7 +243,7 @@ def main() -> None:
     server = uvicorn.Server(config)
 
     # Handle Ctrl-C gracefully
-    def signal_handler(_sig, _frame):
+    def signal_handler(_sig: int, _frame: object) -> None:
         logger = logging.getLogger("uvicorn.error")
         logger.info("Received interrupt signal, shutting down gracefully...")
         server.should_exit = True
@@ -280,7 +280,7 @@ def main_camera() -> None:
     server = uvicorn.Server(config)
 
     # Handle Ctrl-C gracefully
-    def signal_handler(_sig, _frame):
+    def signal_handler(_sig: int, _frame: object) -> None:
         logger = logging.getLogger("uvicorn.error")
         logger.info("Received interrupt signal, shutting down gracefully...")
         server.should_exit = True

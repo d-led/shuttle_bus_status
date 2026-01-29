@@ -357,6 +357,9 @@ class CameraStreamController(CameraStreamControllerProtocol):
         self._latest_detections: list[dict[str, object]] = (
             []
         )  # Latest detection results for UI
+        self._current_frame_bgr: Any | None = (
+            None  # Current frame for detection (to avoid reading different frames)
+        )
         import threading
 
         self._detections_lock = (
@@ -365,6 +368,9 @@ class CameraStreamController(CameraStreamControllerProtocol):
 
         # Plate arrival/departure tracking (lazy initialization)
         self._plate_tracker: Any | None = None
+
+        # Camera connection state (stable, not flickering)
+        self._camera_connected: bool = False
 
     async def register(
         self, socket: ConnectedLiveViewSocket[dict[str, object]]
@@ -473,17 +479,32 @@ class CameraStreamController(CameraStreamControllerProtocol):
         if self._cap is None:
             await self._open_capture()
 
-        frame_b64 = self._try_read_frame_b64()
+        # Read frame once and store it (so detection uses same frame as displayed)
+        # This is critical for test camera which advances on each read()
+        frame_bgr = self._get_current_frame()
+        frame_b64 = None
+        if frame_bgr is not None:
+            # Store frame for detection (thread-safe)
+            with self._detections_lock:
+                self._current_frame_bgr = frame_bgr.copy()  # Copy to avoid modification
+
+            # Convert to base64 for UI
+            _, buffer = cv2.imencode(".jpg", frame_bgr)
+            frame_b64 = base64.b64encode(buffer).decode("utf-8")
+
         # Get latest detections (thread-safe read)
         with self._detections_lock:
             latest_detections = list(self._latest_detections)  # Copy for thread safety
+        logger.debug("_tick: passing %d detections to UI", len(latest_detections))
         for sock in sockets:
             self._apply_frame_to_socket(sock, frame_b64, latest_detections)
+            # Only send update event if context actually changed (avoid spamming WebSocket)
+            # The context update itself triggers a render, so we don't always need the event
             await sock.send_info(InfoEvent("update", "update"))
 
         # Run plate detection in background thread to avoid blocking UI updates
         # This allows the async loop to continue and update the camera feed
-        if frame_b64 is not None and not self._detection_running:
+        if frame_bgr is not None and not self._detection_running:
             # Run detection in thread pool - don't await, let it run in background
             # This prevents blocking the async loop and allows UI to update
             # Only start new detection if one isn't already running
@@ -511,10 +532,14 @@ class CameraStreamController(CameraStreamControllerProtocol):
         device = self._config.device
         logger.info("Opening camera device=%r", device)
 
+        # Reset connection state when opening
+        self._camera_connected = False
+
+        cap: Any
         # Handle test camera device
         if device.startswith("test:"):
             # Import test camera device (relative import within server package)
-            from server.test_camera_device import TestCameraDevice  # type: ignore[import-untyped]
+            from server.test_camera_device import TestCameraDevice
 
             image_dir = Path(device.split(":", 1)[1])
             if not image_dir.exists():
@@ -570,6 +595,12 @@ class CameraStreamController(CameraStreamControllerProtocol):
                 self._cap.release()
         finally:
             self._cap = None
+            # Update connection state when camera is closed
+            if self._camera_connected:
+                self._camera_connected = False
+                logger.debug(
+                    "Camera connection state changed: disconnected (camera closed)"
+                )
 
     def _ensure_detection_components(self) -> None:
         """Lazy initialization of plate detector and OCR."""
@@ -665,16 +696,30 @@ class CameraStreamController(CameraStreamControllerProtocol):
 
             # Trigger UI update after detection completes
             # (detections are already stored in _latest_detections by _run_plate_detection_sync)
+            # Get latest detections and update socket context
+            # Note: Don't pass frame_b64 here (None) - we don't want to update the frame,
+            # just the detections. The frame will be updated in the next _tick().
+            with self._detections_lock:
+                latest_detections = list(self._latest_detections)
+            logger.debug(
+                "After detection: updating UI with %d detections",
+                len(latest_detections),
+            )
             sockets = await self._snapshot_sockets()
             for sock in sockets:
-                await sock.send_info(InfoEvent("update", "update"))
+                # Update socket context with latest detections (but don't change frame or connection status)
+                if latest_detections is not None:
+                    sock.context["latest_detections"] = latest_detections
+                    sock.context["plates_detected"] = len(latest_detections)
+                    # Only send update if we have detections to show (avoid unnecessary updates)
+                    await sock.send_info(InfoEvent("update", "update"))
         except asyncio.CancelledError:
             # Task was cancelled (shutdown) - this is expected
             logger.debug("Plate detection task cancelled")
             raise
         except Exception as e:
             # Don't crash the polling loop on detection errors
-            logger.debug("Plate detection error: %s", e, exc_info=True)
+            logger.error("Plate detection error: %s", e, exc_info=True)
         finally:
             self._detection_running = False
 
@@ -720,10 +765,19 @@ class CameraStreamController(CameraStreamControllerProtocol):
             if self._detector is None or self._ocr is None:
                 return  # Detection not available
 
-            # Get current frame (decode from base64 or read fresh)
-            frame = self._get_current_frame()
+            # Get stored frame (same one that was displayed)
+            # This ensures detection runs on the same frame shown in UI
+            with self._detections_lock:
+                frame = (
+                    self._current_frame_bgr.copy()
+                    if self._current_frame_bgr is not None
+                    else None
+                )
             if frame is None:
+                logger.warning("_run_plate_detection_sync: No frame available")
                 return
+
+            logger.debug("Running detection on frame: shape=%s", frame.shape)
 
             # Run detection synchronously (blocking call, but in background thread)
             from camera.plate_pipeline import detect_plates_in_image
@@ -736,6 +790,15 @@ class CameraStreamController(CameraStreamControllerProtocol):
                 include_crops=False,
             )
             detect_time = time.perf_counter() - detect_start
+
+            # Check if result is None (shouldn't happen, but handle gracefully)
+            if result is None:
+                logger.error(
+                    "detect_plates_in_image returned None - this should not happen"
+                )
+                with self._detections_lock:
+                    self._latest_detections = []
+                return
 
             # Log timing breakdown (YOLO/OCR times are logged inside detect_plates_in_image)
             # But also log here for visibility
@@ -760,20 +823,26 @@ class CameraStreamController(CameraStreamControllerProtocol):
                 )
 
             # Log detections if any and store for UI
-            if result.detections:
+            # Filter out detections with no text (YOLO found a box but OCR failed)
+            valid_detections = [
+                det for det in result.detections if det.text is not None
+            ]
+
+            if valid_detections:
                 # Convert detections to dict format for UI
                 from camera.reporting import _detection_to_dict
 
-                detection_dicts = [_detection_to_dict(det) for det in result.detections]
+                detection_dicts = [_detection_to_dict(det) for det in valid_detections]
 
                 # Store latest detections (thread-safe update from thread pool)
                 with self._detections_lock:
                     self._latest_detections = detection_dicts
+                logger.debug(
+                    "Stored %d detections in _latest_detections", len(detection_dicts)
+                )
 
                 # Extract plate texts for tracking
-                detected_plate_texts = [
-                    det.text for det in result.detections if det.text
-                ]
+                detected_plate_texts = [det.text for det in valid_detections]
 
                 # Update plate tracker (check for arrivals/departures)
                 if self._plate_tracker:
@@ -786,7 +855,7 @@ class CameraStreamController(CameraStreamControllerProtocol):
                         detected_at=detected_at,
                     )
 
-                for det in result.detections:
+                for det in valid_detections:
                     logger.info(
                         "Plate detected: %s (confidence: %.2f)",
                         det.text,
@@ -794,6 +863,7 @@ class CameraStreamController(CameraStreamControllerProtocol):
                     )
             else:
                 # Clear detections if none found
+                logger.debug("No detections found, clearing _latest_detections")
                 with self._detections_lock:
                     self._latest_detections = []
 
@@ -804,7 +874,10 @@ class CameraStreamController(CameraStreamControllerProtocol):
 
         except Exception as e:
             # Don't crash the polling loop on detection errors
-            logger.debug("Plate detection error: %s", e, exc_info=True)
+            logger.error("Plate detection error: %s", e, exc_info=True)
+            # Clear detections on error
+            with self._detections_lock:
+                self._latest_detections = []
 
     def _get_current_frame(self) -> Any | None:
         """Get the current frame as BGR numpy array."""
@@ -842,8 +915,8 @@ class CameraStreamController(CameraStreamControllerProtocol):
             return None
         return base64.b64encode(buf.tobytes()).decode("ascii")
 
-    @staticmethod
     def _apply_frame_to_socket(
+        self,
         socket: ConnectedLiveViewSocket[dict[str, object]],
         frame_b64: str | None,
         detections: list[dict[str, object]] | None = None,
@@ -852,7 +925,21 @@ class CameraStreamController(CameraStreamControllerProtocol):
         #
         # IMPORTANT: do not spam the UI feedback window with camera status.
         # Only errors are surfaced there (see `_handle_stream_error`).
-        socket.context["camera_connected"] = frame_b64 is not None
+
+        # Update camera connection state (debounced - only change if sustained)
+        # This prevents flickering when frames are temporarily unavailable
+        if frame_b64 is not None:
+            # We have a frame - mark as connected
+            if not self._camera_connected:
+                self._camera_connected = True
+                logger.debug("Camera connection state changed: connected")
+        elif self._cap is None and self._camera_connected:
+            # Camera is closed - mark as disconnected
+            self._camera_connected = False
+            logger.debug("Camera connection state changed: disconnected (cap is None)")
+        # If frame_b64 is None but cap exists, keep current state (don't flicker)
+
+        socket.context["camera_connected"] = self._camera_connected
         if frame_b64 is not None:
             socket.context["camera_frame_b64"] = frame_b64
 

@@ -269,9 +269,14 @@ class CameraLiveView(LiveView[dict[str, Any]]):
             latest_detections = []
 
         # Pre-process detections to add computed fields for template
+        # Filter out any detections with None or empty text (shouldn't happen, but be safe)
         processed_detections = []
         for det in latest_detections:
             if not isinstance(det, dict):
+                continue
+            # Skip detections with no text
+            det_text = det.get("text")
+            if not det_text or det_text is None:
                 continue
             processed = dict(det)
             # Calculate confidence percentage for template
@@ -322,8 +327,12 @@ class CameraLiveView(LiveView[dict[str, Any]]):
             await self._config.dependencies.stream.register(socket)
 
     async def disconnect(self, socket: LiveViewSocket[dict[str, Any]]) -> None:
+        logger.info("CameraLiveView.disconnect called")
         if is_connected(socket):
+            logger.info("Unregistering socket from stream")
             await self._config.dependencies.stream.unregister(socket)
+        else:
+            logger.debug("Socket not connected, skipping unregister")
 
     async def handle_event(
         self,

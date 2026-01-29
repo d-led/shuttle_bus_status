@@ -108,9 +108,9 @@ class PlateTracker:
             self._log_event("ARRIVED", event.plate_text)
 
         # Log departure events
-        for event in departure_events:
-            duration = f"{event.duration_seconds:.1f}s"
-            self._log_event("DEPARTED", event.plate_text, duration=duration)
+        for dep_event in departure_events:
+            duration = f"{dep_event.duration_seconds:.1f}s"
+            self._log_event("DEPARTED", dep_event.plate_text, duration=duration)
 
     def get_present_plates(self) -> dict[str, PlateState]:
         """Get all plates that are currently present (have arrived)."""

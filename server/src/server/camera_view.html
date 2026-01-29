@@ -25,7 +25,7 @@
                     <span class="font-mono">{% if camera_connected %}Connected{% else %}Not Connected{% endif %}</span>
                   </div>
 
-                  <div id="server-connection-status" class="flex items-center gap-2" data-connection-state="connecting">
+                  <div id="server-connection-status" class="flex items-center gap-2" data-connection-state="connecting" phx-hook="ConnectionStatus">
                     <span id="server-connecting-icon" class="flex items-center gap-2">
                       <span class="inline-block w-2.5 h-2.5 rounded-full bg-warning"></span>
                       <span class="font-mono">Connecting</span>
@@ -119,7 +119,7 @@
             {% for detection in latest_detections %}
               <div class="border border-base-content/10 rounded-lg p-3 bg-base-200/40">
                 <div class="flex items-center justify-between gap-2">
-                  <div class="font-mono font-semibold text-lg">{{ detection.text or "Unknown" }}</div>
+                  <div class="font-mono font-semibold text-lg">{{ detection.text }}</div>
                   <div class="text-xs text-base-content/60">
                     {% if detection.confidence_percent %}
                       {{ detection.confidence_percent }}%

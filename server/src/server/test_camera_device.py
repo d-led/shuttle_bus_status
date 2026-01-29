@@ -18,9 +18,8 @@ import cv2
 from pyview.events import InfoEvent
 
 if TYPE_CHECKING:
+    import numpy as np
     from pyview.live_socket import ConnectedLiveViewSocket
-else:
-    import numpy as np  # Runtime import needed for cv2 operations
 
 logger = logging.getLogger("uvicorn.error")
 

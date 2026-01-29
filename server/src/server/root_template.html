@@ -11,51 +11,94 @@
   <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
   {{ css_vars_markup }}
   <script>
-    // Server connection status indicator (phx events).
-    // Inspired by MVG's connection status handling, but deliberately minimal.
+    // Server connection status hook using proper Phoenix LiveView hooks
     (function () {
-      let state = "connecting"; // connecting | connected | unstable | broken
+      // Define the connection status hook
+      const ConnectionStatusHook = {
+        mounted() {
+          this.el.setAttribute("data-connection-state", "connecting");
+          this.updateIcons("connecting");
+          
+          // Find the LiveView container to listen to its events
+          // Events are fired on the container with data-phx-main="true"
+          const liveViewContainer = this.el.closest('[data-phx-main="true"]');
+          if (!liveViewContainer) {
+            console.warn("ConnectionStatus hook: LiveView container not found");
+            return;
+          }
+          
+          // Store reference to container for cleanup
+          this.liveViewContainer = liveViewContainer;
+          
+          // Listen to LiveView socket events on the container
+          // These events are fired by Phoenix LiveView's JavaScript client
+          this.handleConnecting = () => {
+            this.setConnectionState("connecting");
+          };
+          this.handleOpen = () => {
+            this.setConnectionState("connected");
+          };
+          this.handleDisconnect = () => {
+            this.setConnectionState("broken");
+          };
+          this.handleClose = () => {
+            this.setConnectionState("broken");
+          };
+          this.handleError = () => {
+            this.setConnectionState("unstable");
+          };
+          
+          liveViewContainer.addEventListener("phx:connecting", this.handleConnecting);
+          liveViewContainer.addEventListener("phx:open", this.handleOpen);
+          liveViewContainer.addEventListener("phx:disconnect", this.handleDisconnect);
+          liveViewContainer.addEventListener("phx:close", this.handleClose);
+          liveViewContainer.addEventListener("phx:error", this.handleError);
+        },
+        
+        destroyed() {
+          // Clean up event listeners
+          if (this.liveViewContainer) {
+            this.liveViewContainer.removeEventListener("phx:connecting", this.handleConnecting);
+            this.liveViewContainer.removeEventListener("phx:open", this.handleOpen);
+            this.liveViewContainer.removeEventListener("phx:disconnect", this.handleDisconnect);
+            this.liveViewContainer.removeEventListener("phx:close", this.handleClose);
+            this.liveViewContainer.removeEventListener("phx:error", this.handleError);
+          }
+        },
+        
+        setConnectionState(state) {
+          this.el.setAttribute("data-connection-state", state);
+          this.updateIcons(state);
+        },
+        
+        updateIcons(state) {
+          const connectedIcon = document.getElementById("server-connected-icon");
+          const disconnectedIcon = document.getElementById("server-disconnected-icon");
+          const connectingIcon = document.getElementById("server-connecting-icon");
+          const unstableIcon = document.getElementById("server-unstable-icon");
 
-      function setState(next) {
-        state = next;
-        const el = document.getElementById("server-connection-status");
-        if (!el) return;
+          if (!connectedIcon || !disconnectedIcon || !connectingIcon || !unstableIcon) return;
 
-        el.setAttribute("data-connection-state", state);
+          connectedIcon.style.display = "none";
+          disconnectedIcon.style.display = "none";
+          connectingIcon.style.display = "none";
+          unstableIcon.style.display = "none";
 
-        const connectedIcon = document.getElementById("server-connected-icon");
-        const disconnectedIcon = document.getElementById("server-disconnected-icon");
-        const connectingIcon = document.getElementById("server-connecting-icon");
-        const unstableIcon = document.getElementById("server-unstable-icon");
+          if (state === "connected") connectedIcon.style.display = "";
+          else if (state === "unstable") unstableIcon.style.display = "";
+          else if (state === "broken") disconnectedIcon.style.display = "";
+          else connectingIcon.style.display = "";
+        }
+      };
 
-        if (!connectedIcon || !disconnectedIcon || !connectingIcon || !unstableIcon) return;
-
-        connectedIcon.style.display = "none";
-        disconnectedIcon.style.display = "none";
-        connectingIcon.style.display = "none";
-        unstableIcon.style.display = "none";
-
-        if (state === "connected") connectedIcon.style.display = "";
-        else if (state === "unstable") unstableIcon.style.display = "";
-        else if (state === "broken") disconnectedIcon.style.display = "";
-        else connectingIcon.style.display = "";
+      // Register the hook for PyView's LiveSocket
+      // PyView's LiveSocket will pick this up from window.Hooks when it initializes
+      if (typeof window !== "undefined") {
+        if (!window.Hooks) {
+          window.Hooks = {};
+        }
+        window.Hooks.ConnectionStatus = ConnectionStatusHook;
       }
-
-      // Initial paint once DOM is ready.
-      if (document.readyState === "loading") {
-        document.addEventListener("DOMContentLoaded", function () {
-          setState("connecting");
-        });
-      } else {
-        setState("connecting");
-      }
-
-      window.addEventListener("phx:connecting", () => setState("connecting"));
-      window.addEventListener("phx:open", () => setState("connected"));
-      window.addEventListener("phx:update", () => setState("connected"));
-      window.addEventListener("phx:disconnect", () => setState("broken"));
-      window.addEventListener("phx:close", () => setState("broken"));
-      window.addEventListener("phx:error", () => setState("unstable"));
     })();
   </script>
   <script defer type="text/javascript" src="/static/assets/app.js"></script>
