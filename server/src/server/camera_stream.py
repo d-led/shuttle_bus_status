@@ -100,19 +100,33 @@ def _has_images(dir_path: Path) -> bool:
     )
 
 
+def _test_camera_dir_candidate() -> str | None:
+    """Return 'test:data/test_camera' if dir exists and has images, else None."""
+    p = Path("data/test_camera")
+    return f"test:{p}" if p.exists() and _has_images(p) else None
+
+
+def _test_dataset_subdir_candidate() -> str | None:
+    """Return first existing test: path under data/test_images/german_plates (kaggle/roboflow), else None."""
+    base = Path("data/test_images/german_plates")
+    if not base.exists():
+        return None
+    for subdir in ["kaggle", "roboflow"]:
+        candidate = base / subdir
+        if candidate.exists():
+            return f"test:{candidate}"
+    return None
+
+
 def _test_device_candidates() -> list[str]:
     """Return test device candidates (test:path) for UI selection."""
     out: list[str] = []
-    test_camera_dir = Path("data/test_camera")
-    if test_camera_dir.exists() and _has_images(test_camera_dir):
-        out.append(f"test:{test_camera_dir}")
-    test_dataset = Path("data/test_images/german_plates")
-    if test_dataset.exists():
-        for subdir in ["kaggle", "roboflow"]:
-            test_dir = test_dataset / subdir
-            if test_dir.exists():
-                out.append(f"test:{test_dir}")
-                break
+    c1 = _test_camera_dir_candidate()
+    if c1 is not None:
+        out.append(c1)
+    c2 = _test_dataset_subdir_candidate()
+    if c2 is not None:
+        out.append(c2)
     return out
 
 

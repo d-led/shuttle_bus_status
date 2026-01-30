@@ -13,7 +13,7 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 
 import cv2
 import numpy as np
@@ -245,52 +245,16 @@ class EasyOcrPlateRecognizer:
     def _recognize_with_multiple_preprocessing(
         self, plate_bgr: np.ndarray
     ) -> tuple[str | None, float | None, dict[str, object]]:
-        """Try multiple preprocessing strategies and return best result.
-
-        Optimized to use fewer strategies for normal images, all strategies only for challenging cases.
-        """
-        # Get original crop size for strategy selection
+        """Try multiple preprocessing strategies and return best result."""
         h, w = plate_bgr.shape[:2]
         is_very_small = h < 30 or w < 100
         is_small = h < 50 or w < 150
-
-        # Adaptive strategy selection:
-        # - Normal images: try 2-3 fast strategies first, early exit if good result
-        # - Small images: try 4-5 strategies
-        # - Very small images: try all 8 strategies
-        all_strategies = _preprocess_plate_strategies(plate_bgr)
-
-        # Fast strategies to try first (good balance of speed/accuracy)
-        # Note: "upscale_clahe_threshold" is the actual name, but we'll match by prefix
-        fast_strategies = ["original", "upscale_clahe", "remove_vignette"]
-
-        # Select which strategies to use
-        if is_very_small:
-            # Very small: use all strategies
-            strategies_to_try = all_strategies
-        elif is_small:
-            # Small: use most strategies but skip slowest ones
-            strategies_to_try = [
-                s for s in all_strategies if s[0] not in ["flatten", "smooth_sharpen"]
-            ]
-        else:
-            # Normal size: try fast strategies first, then others if needed
-            strategies_to_try = []
-            # Add fast strategies first
-            for name, func in all_strategies:
-                if name in fast_strategies or name.startswith("upscale_clahe"):
-                    strategies_to_try.append((name, func))
-            # Add remaining strategies (but limit to 2-3 more for normal images)
-            remaining = [
-                s
-                for s in all_strategies
-                if s[0] not in fast_strategies and not s[0].startswith("upscale_clahe")
-            ]
-            # For normal images, only add 2 more strategies to keep it fast
-            strategies_to_try.extend(remaining[:2])
+        strategies_to_try = _select_preprocessing_strategies(
+            plate_bgr, is_very_small=is_very_small, is_small=is_small
+        )
 
         all_results: list[tuple[str | None, float | None, dict[str, object]]] = []
-        good_enough_conf = 0.7  # Early exit if we get a high-confidence result
+        fast_strategies = ["original", "upscale_clahe", "remove_vignette"]
 
         for strategy_name, processed in strategies_to_try:
             plate_rgb = cv2.cvtColor(processed, cv2.COLOR_BGR2RGB)
@@ -299,30 +263,14 @@ class EasyOcrPlateRecognizer:
             )
             if text is not None:
                 all_results.append((text, conf, meta))
-
-                # Early exit optimization: if we get a high-confidence result from fast strategies,
-                # and the image is not very small, we can skip remaining strategies
-                if (
-                    not is_very_small
-                    and (
-                        strategy_name in fast_strategies
-                        or strategy_name.startswith("upscale_clahe")
-                    )
-                    and conf is not None
-                    and conf >= good_enough_conf
-                    and len(text) >= 4  # Reasonable length
+                if _should_early_exit_preprocessing(
+                    is_very_small,
+                    strategy_name,
+                    fast_strategies,
+                    conf,
+                    text,
+                    len(strategies_to_try) - len(all_results),
                 ):
-                    # Good enough result from fast strategy - skip remaining strategies
-                    import logging
-
-                    logger = logging.getLogger(__name__)
-                    logger.debug(
-                        "Early exit: got good result (conf=%.2f, text=%s) from strategy %s, skipping %d remaining strategies",
-                        conf,
-                        text,
-                        strategy_name,
-                        len(strategies_to_try) - len(all_results),
-                    )
                     break
 
         if not all_results:
@@ -335,37 +283,12 @@ class EasyOcrPlateRecognizer:
                 },
             )
 
-        # Select best result: prefer longer text IF confidence is reasonable, else prefer confidence
-        # This helps when OCR only reads part of the plate, but avoids low-confidence garbage
-        min_conf_for_length_preference = 0.3  # Only prefer length if confidence >= this
-
-        def score_result(
-            x: tuple[str | None, float | None, dict[str, object]],
-        ) -> tuple[float, float, float]:
-            text, conf, meta = x
-            text_len = len(text or "")
-            conf_val = conf or 0.0
-            strategy = meta.get("strategy_name", "unknown") if meta else "unknown"
-
-            # Boost score for "flatten" strategy on very small crops
-            # This strategy is specifically designed for tiny crops with background flattening
-            strategy_boost = 0.15 if strategy == "flatten" and is_very_small else 0.0
-            conf_val_boosted = conf_val + strategy_boost
-
-            # If confidence is too low, prioritize confidence
-            if conf_val_boosted < min_conf_for_length_preference:
-                return (conf_val_boosted, 0.0, 0.0)  # Only confidence matters
-
-            # If confidence is reasonable, prefer longer text
-            return (
-                1.0,
-                text_len,
-                conf_val_boosted,
-            )  # (high priority flag, length, confidence)
-
-        best_result = max(all_results, key=score_result)
-
+        best_result = max(
+            all_results,
+            key=lambda x: _score_preprocessing_result(x, is_very_small),
+        )
         best_text, best_conf, best_meta = best_result
+        all_strategies = _preprocess_plate_strategies(plate_bgr)
         best_meta["preprocessing_strategies_tried"] = len(strategies_to_try)
         best_meta["preprocessing_strategies_available"] = len(all_strategies)
         best_meta["preprocessing_strategy_used"] = best_meta.get(
@@ -375,7 +298,6 @@ class EasyOcrPlateRecognizer:
             {"strategy": m.get("strategy_name", "unknown"), "text": t, "conf": c}
             for t, c, m in all_results
         ]
-
         return best_text, best_conf, best_meta
 
     def _recognize_single(
@@ -464,29 +386,22 @@ class EasyOcrPlateRecognizer:
         return {"allowlist": self._allowlist_chars}
 
 
-def _best_easyocr_candidate(results: object) -> tuple[str, float] | None:
-    """Select best OCR result, combining multiple detections if they're on the same line.
+def _easyocr_bbox_center(bbox: object) -> tuple[float, float]:
+    """Extract (y_center, x_center) from bbox [[x,y], ...] or return (0, 0)."""
+    if not isinstance(bbox, (list, tuple)) or len(bbox) < 4:
+        return 0.0, 0.0
+    if not all(isinstance(pt, (list, tuple)) and len(pt) >= 2 for pt in bbox):
+        return 0.0, 0.0
+    y_coords = [pt[1] for pt in bbox]
+    x_coords = [pt[0] for pt in bbox]
+    return sum(y_coords) / len(y_coords), sum(x_coords) / len(x_coords)
 
-    For plates with spaces (e.g., "LIP VE 351"), EasyOCR may return multiple detections.
-    We combine them if they're vertically aligned (same line).
-    """
-    if not isinstance(results, list) or not results:
-        return None
 
-    # If only one result, return it
-    if len(results) == 1:
-        item = results[0]
-        if isinstance(item, (list, tuple)) and len(item) >= 3:
-            text_str = str(item[1]).strip()
-            if text_str:
-                return text_str, float(item[2])
-        return None
-
-    # Multiple results: try to combine them if they're on the same line
-    valid_results: list[tuple[str, float, float, float]] = (
-        []
-    )  # (text, conf, y_center, x_center)
-
+def _easyocr_valid_results(
+    results: list[object],
+) -> list[tuple[str, float, float, float]]:
+    """Parse EasyOCR result list into (text, conf, y_center, x_center) tuples."""
+    out: list[tuple[str, float, float, float]] = []
     for item in results:
         if not isinstance(item, (list, tuple)) or len(item) < 3:
             continue
@@ -494,75 +409,96 @@ def _best_easyocr_candidate(results: object) -> tuple[str, float] | None:
         if not text_str:
             continue
         conf_f = float(item[2])
-
-        # Extract bounding box to check vertical alignment
         bbox = item[0] if len(item) > 0 else None
-        y_center = 0.0
-        x_center = 0.0
-        if (
-            isinstance(bbox, (list, tuple))
-            and len(bbox) >= 4
-            and all(isinstance(pt, (list, tuple)) and len(pt) >= 2 for pt in bbox)
-        ):
-            # bbox is [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
-            y_coords = [pt[1] for pt in bbox]
-            x_coords = [pt[0] for pt in bbox]
-            y_center = sum(y_coords) / len(y_coords)
-            x_center = sum(x_coords) / len(x_coords)
+        y_center, x_center = _easyocr_bbox_center(bbox)
+        out.append((text_str, conf_f, y_center, x_center))
+    return out
 
-        valid_results.append((text_str, conf_f, y_center, x_center))
 
+def _easyocr_y_threshold(valid_results: list[tuple[str, float, float, float]]) -> float:
+    """Compute y-threshold for grouping same-line detections (10-30px, or 10% of span)."""
+    if not valid_results:
+        return 20.0
+    max_y = max(r[2] for r in valid_results)
+    min_y = min(r[2] for r in valid_results)
+    estimated_height = max_y - min_y if max_y > min_y else 100.0
+    return max(10.0, min(30.0, estimated_height * 0.1))
+
+
+def _easyocr_find_group_index(
+    groups: list[list[tuple[str, float, float, float]]],
+    y: float,
+    y_threshold: float,
+) -> int | None:
+    """Index of group with similar y, or None."""
+    for idx, group in enumerate(groups):
+        if group and abs(group[0][2] - y) < y_threshold:
+            return idx
+    return None
+
+
+def _easyocr_group_by_line(
+    valid_results: list[tuple[str, float, float, float]],
+    y_threshold: float,
+) -> list[list[tuple[str, float, float, float]]]:
+    """Group (text, conf, y, x) by similar y (same line)."""
+    groups: list[list[tuple[str, float, float, float]]] = []
+    for result in valid_results:
+        _, _, y, _ = result
+        idx = _easyocr_find_group_index(groups, y, y_threshold)
+        if idx is not None:
+            groups[idx].append(result)
+        else:
+            groups.append([result])
+    return groups
+
+
+def _easyocr_combine_groups(
+    groups: list[list[tuple[str, float, float, float]]],
+) -> list[tuple[str, float]]:
+    """Sort each group by x and combine text; return (combined_text, avg_conf)."""
+    combined: list[tuple[str, float]] = []
+    for group in groups:
+        group.sort(key=lambda r: r[3])
+        combined.append(
+            (" ".join(r[0] for r in group), sum(r[1] for r in group) / len(group))
+        )
+    return combined
+
+
+def _easyocr_single_result(item: object) -> tuple[str, float] | None:
+    """Parse single EasyOCR result item. Returns (text, conf) or None."""
+    if not isinstance(item, (list, tuple)) or len(item) < 3:
+        return None
+    text_str = str(item[1]).strip()
+    return (text_str, float(item[2])) if text_str else None
+
+
+def _easyocr_best_single(
+    valid_results: list[tuple[str, float, float, float]],
+) -> tuple[str, float] | None:
+    """Return (text, conf) with highest conf from valid_results, or None."""
     if not valid_results:
         return None
+    best = max(valid_results, key=lambda r: r[1])
+    return (best[0], best[1])
 
-    # Group results by vertical position (same line if y_center is within threshold)
-    # Adaptive threshold: use 10% of average bbox height, minimum 10px, maximum 30px
-    if valid_results:
-        # Estimate image height from y coordinates (rough estimate)
-        max_y = max(r[2] for r in valid_results)
-        min_y = min(r[2] for r in valid_results)
-        estimated_height = max_y - min_y if max_y > min_y else 100.0
-        y_threshold = max(10.0, min(30.0, estimated_height * 0.1))
-    else:
-        y_threshold = 20.0
-    groups: list[list[tuple[str, float, float, float]]] = []
 
-    for result in valid_results:
-        text, conf, y, _x = result
-        # Find a group with similar y position
-        matched = False
-        for group in groups:
-            if group and abs(group[0][2] - y) < y_threshold:
-                group.append(result)
-                matched = True
-                break
-        if not matched:
-            groups.append([result])
-
-    # For each group, combine text (sorted by x position) and use average confidence
-    combined_results: list[tuple[str, float]] = []
-    for group in groups:
-        # Sort by x position (left to right)
-        group.sort(key=lambda r: r[3])
-        combined_text = " ".join(r[0] for r in group)
-        avg_conf = sum(r[1] for r in group) / len(group)
-        combined_results.append((combined_text, avg_conf))
-
-    # Return the result with highest confidence
+def _best_easyocr_candidate(results: object) -> tuple[str, float] | None:
+    """Select best OCR result, combining multiple detections if on same line."""
+    if not isinstance(results, list) or not results:
+        return None
+    if len(results) == 1:
+        return _easyocr_single_result(results[0])
+    valid_results = _easyocr_valid_results(results)
+    if not valid_results:
+        return None
+    y_threshold = _easyocr_y_threshold(valid_results)
+    groups = _easyocr_group_by_line(valid_results, y_threshold)
+    combined_results = _easyocr_combine_groups(groups)
     if combined_results:
         return max(combined_results, key=lambda x: x[1])
-
-    # Fallback: return single best result
-    best_text: str | None = None
-    best_conf: float | None = None
-    for text, conf, _, _ in valid_results:
-        if best_conf is None or conf > best_conf:
-            best_text = text
-            best_conf = conf
-
-    if best_text is None or best_conf is None:
-        return None
-    return best_text, best_conf
+    return _easyocr_best_single(valid_results)
 
 
 _PLATE_NORMALIZE_RE = re.compile(r"[^A-Z0-9]+")
@@ -593,156 +529,293 @@ def _normalize_plate_text(text: str) -> str:
     return _PLATE_NORMALIZE_RE.sub("", upper)
 
 
+# Characters commonly misread from vignettes (circular/oval shapes on German plates)
+_VIGNETTE_CHARS = frozenset(
+    {"E", "B", "O", "0", "8", "6", "G", "Q", "D", "P", "I", "1"}
+)
+
+
+def _vignette_parts_step(parts: list[str], i: int, result_parts: list[str]) -> int:
+    """Process one part; merge vignette or append. Returns next index."""
+    if (
+        i > 0
+        and i < len(parts) - 1
+        and len(parts[i]) == 1
+        and parts[i].upper() in _VIGNETTE_CHARS
+        and len(parts[i - 1]) >= 2
+        and len(parts[i + 1]) >= 2
+    ):
+        result_parts[-1] = result_parts[-1] + parts[i + 1]
+        return i + 2
+    if (
+        i > 0
+        and len(parts[i]) >= 3
+        and parts[i][0].upper() in _VIGNETTE_CHARS
+        and len(parts[i - 1]) >= 2
+    ):
+        result_parts[-1] = result_parts[-1] + parts[i][1:]
+        return i + 1
+    result_parts.append(parts[i])
+    return i + 1
+
+
+def _remove_vignette_from_parts(parts: list[str]) -> str:
+    """Merge or strip vignette chars from space-separated parts."""
+    result_parts: list[str] = []
+    i = 0
+    while i < len(parts):
+        i = _vignette_parts_step(parts, i, result_parts)
+    return " ".join(result_parts)
+
+
+def _vignette_regex_replace(match: re.Match[str]) -> str:
+    """Regex replacer: drop single vignette char between two groups if safe."""
+    prefix = match.group(1)
+    single_char = match.group(2)
+    suffix = match.group(3)
+    if single_char.upper() not in _VIGNETTE_CHARS:
+        return match.group(0)
+    char_pos = len(prefix)
+    if char_pos <= 2:
+        if len(prefix) >= 3:
+            return match.group(0)
+        if suffix and suffix[0].isalpha():
+            return match.group(0)
+    return prefix + suffix
+
+
 def _remove_vignette_characters(text: str) -> str:
     """Remove spurious single characters that are likely vignettes (circular seals).
 
-    German license plates have vignettes (circular seals) between letter groups
-    that can be misread as single characters like 'E' or 'B'. This function
-    removes isolated single characters in the middle of the text that are likely
-    vignettes rather than actual plate characters.
-
-    Pattern: Letters-Numbers or Letters-Letters-Numbers
-    Vignette appears between groups, often as a single character.
+    German license plates have vignettes between letter groups that can be
+    misread as single characters like 'E' or 'B'. Removes isolated single
+    characters in the middle that are likely vignettes.
     """
     if not text or len(text) < 4:
         return text
 
-    import re
-
-    # Characters commonly misread from vignettes (circular/oval shapes)
-    # Note: 'I' and '1' are added because circular seals can appear as vertical lines
-    vignette_chars = {"E", "B", "O", "0", "8", "6", "G", "Q", "D", "P", "I", "1"}
-
-    # Step 1: Handle text with spaces - split by spaces and process
-    # This handles both: "LIP E AS277" and "L1P BAS277" (B at start of word)
     parts = text.split()
     if len(parts) >= 2:
-        result_parts: list[str] = []
-        i = 0
-        while i < len(parts):
-            # Case 1: Single vignette char between two longer parts: "LIP E AS277"
-            if (
-                i > 0
-                and i < len(parts) - 1
-                and len(parts[i]) == 1
-                and parts[i].upper() in vignette_chars
-                and len(parts[i - 1]) >= 2
-                and len(parts[i + 1]) >= 2
-            ):
-                # This is a vignette - skip it and combine prev and next
-                result_parts[-1] = result_parts[-1] + parts[i + 1]
-                i += 2  # Skip both the vignette and the next part (already merged)
-            # Case 2: Vignette char at start of word: "L1P BAS277" -> remove B
-            elif (
-                i > 0
-                and len(parts[i]) >= 3  # At least 3 chars (vignette + 2+ rest)
-                and parts[i][0].upper() in vignette_chars
-                and len(parts[i - 1]) >= 2
-            ):
-                # Remove first char (vignette) and merge with previous
-                result_parts[-1] = result_parts[-1] + parts[i][1:]
-                i += 1
-            else:
-                result_parts.append(parts[i])
-                i += 1
-        text = " ".join(result_parts)
+        text = _remove_vignette_from_parts(parts)
 
-    # Step 2: Remove spaces and separators for further analysis
     text_clean = text.replace(" ", "").replace(".", "").replace("-", "")
     if len(text_clean) < 4:
         return text_clean
 
-    # Step 3: Handle single vignette chars without spaces (more aggressive)
-    # Use regex but be smarter - only remove if character is clearly in middle
-    # e.g., "LIPBAS277" -> "LIPAS277" (remove B)
-    def remove_vignette(match: re.Match[str]) -> str:
-        prefix = match.group(1)
-        single_char = match.group(2)
-        suffix = match.group(3)
-
-        # Only remove if it's a common vignette character
-        if single_char.upper() not in vignette_chars:
-            return match.group(0)  # Keep original
-
-        # Additional check: vignettes are typically between letter groups
-        # Don't remove if character is part of a valid city code (positions 0-2)
-        # German city codes are typically 1-3 letters, so positions 0-2 are protected
-        char_pos = len(prefix)
-
-        # Be conservative: don't remove if character is at position 0, 1, or 2
-        # These positions are typically part of the city code (1-3 letters)
-        # Exception: if prefix is only 1-2 letters AND suffix starts with digits,
-        # then the character might be a vignette (e.g., "AB" + "I" + "123")
-        if char_pos <= 2:
-            # Character is in city code range (positions 0-2)
-            # Only remove if prefix is short (1-2 chars) AND suffix looks like digits
-            if len(prefix) >= 3:
-                # Prefix is 3+ chars - definitely part of city code, don't remove
-                return match.group(0)
-            # For 1-2 char prefix, check if suffix starts with digits
-            # If suffix starts with letters, the character might be part of city code
-            if suffix and suffix[0].isalpha():
-                # Suffix starts with letter - might be part of city code, be conservative
-                return match.group(0)
-
-        return prefix + suffix
-
-    # Try matching with explicit vignette chars first (more targeted)
-    # Build regex pattern dynamically from vignette_chars set
-    # Use greedy matching (default) - vignettes typically appear after letter groups
-    vignette_pattern = "".join(sorted(vignette_chars))
+    vignette_pattern = "".join(sorted(_VIGNETTE_CHARS))
     result = re.sub(
         f"([A-Z0-9]{{2,}})([{vignette_pattern}])([A-Z0-9]{{2,}})",
-        remove_vignette,
+        _vignette_regex_replace,
         text_clean,
         flags=re.IGNORECASE,
     )
-
-    # Only return modified result if it's still reasonable length
     if result != text_clean and len(result) >= 3:
         return result
-
     return text_clean
 
 
-def _correct_plate_characters_by_position(text: str) -> str:
-    """Apply position-based character correction for German plates.
+def _parse_paddle_line(line: object) -> tuple[str | None, float]:
+    """Parse one PaddleOCR result line. Returns (text, conf) or (None, 0.0)."""
+    if not isinstance(line, (list, tuple)) or len(line) < 2:
+        return None, 0.0
+    if isinstance(line[1], (list, tuple)) and len(line[1]) >= 2:
+        text_val, conf_val = line[1][0], line[1][1]
+        text = str(text_val).strip() if text_val else None
+        try:
+            return text, float(conf_val)
+        except (ValueError, TypeError):
+            return text, 0.0
+    if len(line) >= 3:
+        text_val = line[1]
+        conf_val = line[2] if len(line) > 2 else 0.0
+        text = str(text_val).strip() if text_val else None
+        try:
+            return text, float(conf_val)
+        except (ValueError, TypeError):
+            return text, 0.0
+    return None, 0.0
 
-    German plate format: [1-3 letters][1-2 letters][1-4 digits]
-    Positions 0-2: letters (city code)
-    Positions 3-4: optional letters (suffix)
-    Positions 5+: digits
 
-    Only corrects characters that are likely OCR errors (e.g., 0/O, 1/I confusion).
-    Uses heuristics: if we see a pattern like "letter-digit-letter", assume digits section starts later.
-    """
-    if not text or len(text) < 3:
+def _best_paddle_line(lines: list[object]) -> tuple[str | None, float]:
+    """Return (best_text, best_conf) from PaddleOCR lines, or (None, 0.0)."""
+    best_text: str | None = None
+    best_conf: float = 0.0
+    for line in lines:
+        text, conf = _parse_paddle_line(line)
+        if text and conf > best_conf:
+            best_text = text
+            best_conf = conf
+    return best_text, best_conf
+
+
+def _tesseract_parse_image_to_data(
+    data: dict[str, object],
+) -> tuple[str, float] | None:
+    """Parse Tesseract image_to_data dict. Returns (combined_text, avg_conf) or None."""
+    texts: list[str] = []
+    confidences: list[float] = []
+    text_list = data.get("text", [])
+    conf_list = data.get("conf", [0])
+    if not isinstance(text_list, list) or not isinstance(conf_list, list):
+        return None
+    for i in range(len(text_list)):
+        text = text_list[i] if i < len(text_list) else ""
+        text = str(text).strip() if text else ""
+        if not text:
+            continue
+        conf_val = int(conf_list[i]) if i < len(conf_list) else 0
+        if conf_val > 0:
+            texts.append(text)
+            confidences.append(float(conf_val) / 100.0)
+    if not texts:
+        return None
+    combined = " ".join(texts).strip()
+    avg_conf = sum(confidences) / len(confidences) if confidences else 0.5
+    return combined, avg_conf
+
+
+def _tesseract_try_psm(
+    pt: Any,
+    plate_rgb: np.ndarray,
+    lang: str,
+    psm: str,
+    allowlist: bool,
+    allowlist_chars: str,
+) -> tuple[str, float] | None:
+    """Run Tesseract with one PSM; return (combined_text, avg_conf) or None."""
+    psm_config = f"--psm {psm}"
+    if allowlist:
+        psm_config += f" -c tessedit_char_whitelist={allowlist_chars}"
+    try:
+        data = pt.image_to_data(
+            plate_rgb, lang=lang, config=psm_config, output_type=pt.Output.DICT
+        )
+        return _tesseract_parse_image_to_data(data)
+    except Exception:
+        return None
+
+
+def _tesseract_fallback_string(
+    pt: Any, plate_rgb: np.ndarray, lang: str, config_str: str
+) -> tuple[str | None, float]:
+    """Fallback: image_to_string. Returns (text, 0.5) or (None, 0.0)."""
+    try:
+        simple_text = pt.image_to_string(
+            plate_rgb, lang=lang, config=config_str
+        ).strip()
+        return (simple_text, 0.5) if simple_text else (None, 0.0)
+    except Exception:
+        return None, 0.0
+
+
+def _tesseract_best_result(
+    pytesseract: object,
+    plate_rgb: np.ndarray,
+    cfg: dict[str, Any],
+) -> tuple[str | None, float]:
+    """Try PSM modes then image_to_string; return (best_text, best_conf)."""
+    pt: Any = pytesseract
+    lang = cfg.get("lang", "")
+    allowlist = bool(cfg.get("allowlist", False))
+    allowlist_chars = str(cfg.get("allowlist_chars", ""))
+    config_str = str(cfg.get("config", "--psm 7"))
+    best_text: str | None = None
+    best_conf: float = 0.0
+    for psm in ["7", "11", "6"]:
+        parsed = _tesseract_try_psm(
+            pt, plate_rgb, lang, psm, allowlist, allowlist_chars
+        )
+        if parsed and parsed[1] > best_conf:
+            best_text, best_conf = parsed[0], parsed[1]
+    if not best_text:
+        best_text, best_conf = _tesseract_fallback_string(
+            pt, plate_rgb, lang, config_str
+        )
+    return best_text, best_conf
+
+
+def _dots_ocr_extract_text(result: object) -> str:
+    """Extract text from dots.ocr result (markdown or json layout fallback)."""
+    text = result.markdown.strip() if hasattr(result, "markdown") else ""
+    if text:
         return text
+    if not hasattr(result, "json"):
+        return ""
+    import json
 
-    # Heuristic: find where digits section likely starts
-    # Look for pattern: letters, then digits (at least 2 consecutive digits)
-    digit_start = len(text)
+    raw = getattr(result, "json", None)
+    data = json.loads(raw) if isinstance(raw, str) else raw
+    if not isinstance(data, dict):
+        return ""
+    texts = []
+    for elem in data.get("layout", []):
+        if (
+            isinstance(elem, dict)
+            and elem.get("category") == "Text"
+            and elem.get("text")
+        ):
+            texts.append(elem["text"])
+    return " ".join(texts).strip()
+
+
+def _plate_ocr_post_process(
+    best_text: str,
+    best_conf: float,
+    candidates: int,
+    engine: str,
+    *,
+    allowlist: bool,
+    allowlist_chars: str,
+    normalize: bool,
+    min_confidence: float,
+    preprocess: bool,
+) -> tuple[str | None, float | None, dict[str, object]]:
+    """Apply vignette removal, correction, normalization and build meta. Shared by OCR recognizers."""
+    if allowlist:
+        best_text = "".join(c for c in best_text if c.upper() in allowlist_chars)
+    text_no_vignette = _remove_vignette_characters(best_text)
+    corrected_text = _correct_plate_characters_by_position(text_no_vignette)
+    normalized_text = (
+        _normalize_plate_text(corrected_text) if normalize else corrected_text
+    )
+    meta: dict[str, object] = {
+        "candidates": candidates,
+        "raw_text": best_text,
+        "corrected_text": corrected_text,
+        "raw_confidence": best_conf,
+        "normalized_text": normalized_text if normalize else None,
+        "preprocess": preprocess,
+        "allowlist": allowlist,
+        "engine": engine,
+    }
+    if best_conf < min_confidence:
+        return None, best_conf, meta
+    return (normalized_text if normalize else corrected_text), best_conf, meta
+
+
+def _digit_section_start(text: str) -> int:
+    """Index where digit section starts (first of two consecutive digits), or len(text)."""
     for i in range(len(text) - 1):
         if text[i].isdigit() and text[i + 1].isdigit():
-            # Found start of digit section
-            digit_start = i
-            break
+            return i
+    return len(text)
 
-    corrected = []
-    for i, char in enumerate(text):
-        if i < digit_start:  # Letter positions (before digit section)
-            # In letter positions, digits are likely OCR errors
-            if char.isdigit() and char in _INT_TO_CHAR:
-                corrected.append(_INT_TO_CHAR[char])
-            else:
-                corrected.append(char)
-        else:  # Digit positions
-            # In digit positions, letters that look like digits are likely OCR errors
-            if char.isalpha() and char in _CHAR_TO_INT:
-                corrected.append(_CHAR_TO_INT[char])
-            else:
-                corrected.append(char)
 
+def _correct_char_for_position(char: str, i: int, digit_start: int) -> str:
+    """Correct one character by position (letter vs digit section)."""
+    if i < digit_start:
+        return _INT_TO_CHAR[char] if char.isdigit() and char in _INT_TO_CHAR else char
+    return _CHAR_TO_INT[char] if char.isalpha() and char in _CHAR_TO_INT else char
+
+
+def _correct_plate_characters_by_position(text: str) -> str:
+    """Apply position-based character correction for German plates."""
+    if not text or len(text) < 3:
+        return text
+    digit_start = _digit_section_start(text)
+    corrected = [
+        _correct_char_for_position(char, i, digit_start) for i, char in enumerate(text)
+    ]
     return "".join(corrected)
 
 
@@ -889,63 +962,35 @@ def _preprocess_plate_strategy_otsu(plate_bgr: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(thr, cv2.COLOR_GRAY2BGR)
 
 
-def _preprocess_plate_strategy_flatten(plate_bgr: np.ndarray) -> np.ndarray:
-    """Strategy 6: Aggressive upscaling + background flattening for very small crops.
-
-    This strategy is optimized for very small crops (e.g., 20px tall) where simple
-    upscaling isn't enough. It:
-    1. Aggressively upscales (targets 500px+ width, 150px+ height)
-    2. Flattens background using multiple techniques (makes plate background uniform)
-    3. Enhances contrast with CLAHE
-    4. Applies denoising
-    5. Uses adaptive thresholding optimized for small text
-    6. Additional sharpening for character clarity
-    """
-    if plate_bgr.size == 0:
-        return plate_bgr
-
+def _flatten_strategy_upscale_and_flatten(
+    plate_bgr: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Upscale, denoise, flatten background, CLAHE. Returns (eq_after_clahe, up)."""
     h, w = plate_bgr.shape[:2]
-
-    # Very aggressive upscaling for tiny crops
-    # Target: at least 500px wide or 150px tall (even larger for better OCR)
     scale = max(6.0, 500.0 / w, 150.0 / h)
     up = cv2.resize(
         plate_bgr,
         (max(1, int(w * scale)), max(1, int(h * scale))),
-        interpolation=cv2.INTER_LANCZOS4,  # LANCZOS4 for best quality on upscaling
+        interpolation=cv2.INTER_LANCZOS4,
     )
-
-    # Convert to grayscale
     gray = cv2.cvtColor(up, cv2.COLOR_BGR2GRAY)
-
-    # Denoise first (helps with small text artifacts)
     denoised = cv2.fastNlMeansDenoising(
         gray, h=10, templateWindowSize=7, searchWindowSize=21
     )
-
-    # Background flattening: multiple techniques
-    # Method 1: Morphological background estimation
     kernel_bg = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 25))
     bg_morph = cv2.morphologyEx(denoised, cv2.MORPH_CLOSE, kernel_bg)
     bg_morph = cv2.GaussianBlur(bg_morph, (31, 31), 0)
-
-    # Method 2: Rolling ball algorithm (simplified - subtract blurred version)
     bg_blur = cv2.GaussianBlur(denoised, (51, 51), 0)
-
-    # Combine both background estimates
     background = cv2.addWeighted(bg_morph, 0.5, bg_blur, 0.5, 0)
-
-    # Subtract background to flatten (makes text stand out more)
     flattened = cv2.subtract(denoised, background)
-
-    # Normalize to full dynamic range
     flattened = cv2.normalize(flattened, None, 0.0, 255.0, cv2.NORM_MINMAX)  # type: ignore[call-overload]
-
-    # Apply CLAHE for contrast enhancement (more aggressive for small crops)
     clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8, 8))
     eq = clahe.apply(flattened)
+    return eq, up
 
-    # Stronger sharpening to enhance character edges (important for small text)
+
+def _flatten_strategy_sharpen_threshold(eq: np.ndarray, up: np.ndarray) -> np.ndarray:
+    """Sharpen, adaptive threshold, morphological cleanup; return BGR."""
     kernel_sharpen = (
         np.array(
             [
@@ -960,9 +1005,6 @@ def _preprocess_plate_strategy_flatten(plate_bgr: np.ndarray) -> np.ndarray:
         / 8.0
     )
     sharp = cv2.filter2D(eq, -1, kernel_sharpen)
-
-    # Adaptive threshold optimized for small text
-    # Block size based on image size
     block_size = max(11, int(up.shape[1] / 8))
     if block_size % 2 == 0:
         block_size += 1
@@ -972,14 +1014,19 @@ def _preprocess_plate_strategy_flatten(plate_bgr: np.ndarray) -> np.ndarray:
         cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
         cv2.THRESH_BINARY,
         block_size,
-        10,  # Higher C value for better contrast on flattened images
+        10,
     )
-
-    # Additional morphological cleanup (remove small noise)
     kernel_clean = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
     cleaned = cv2.morphologyEx(thr, cv2.MORPH_CLOSE, kernel_clean)
-
     return cv2.cvtColor(cleaned, cv2.COLOR_GRAY2BGR)
+
+
+def _preprocess_plate_strategy_flatten(plate_bgr: np.ndarray) -> np.ndarray:
+    """Aggressive upscaling + background flattening for very small crops."""
+    if plate_bgr.size == 0:
+        return plate_bgr
+    eq, up = _flatten_strategy_upscale_and_flatten(plate_bgr)
+    return _flatten_strategy_sharpen_threshold(eq, up)
 
 
 def _preprocess_plate_strategy_smooth_sharpen(plate_bgr: np.ndarray) -> np.ndarray:
@@ -1060,111 +1107,48 @@ def _preprocess_plate_strategy_smooth_sharpen(plate_bgr: np.ndarray) -> np.ndarr
     return cv2.cvtColor(cleaned, cv2.COLOR_GRAY2BGR)
 
 
-def _preprocess_plate_strategy_remove_vignette(plate_bgr: np.ndarray) -> np.ndarray:
-    """Strategy 8: Remove German plate vignette (circular seal) that causes spurious OCR.
-
-    German license plates have a circular/oval vignette (seal/sticker) between letter groups
-    that has different contrast and can be misread as characters like 'E' or 'B'.
-
-    This strategy:
-    1. Upscales for better detection
-    2. Detects circular/oval dark regions (vignettes)
-    3. Masks them out (fills with background color)
-    4. Applies standard preprocessing
-    """
-    if plate_bgr.size == 0:
-        return plate_bgr
-
-    h, w = plate_bgr.shape[:2]
-
-    # Upscale for better vignette detection
-    scale = max(4.0, 400.0 / w, 100.0 / h)
-    up = cv2.resize(
-        plate_bgr,
-        (max(1, int(w * scale)), max(1, int(h * scale))),
-        interpolation=cv2.INTER_LANCZOS4,
-    )
-
-    # Convert to grayscale
-    gray = cv2.cvtColor(up, cv2.COLOR_BGR2GRAY)
-
-    # Detect and mask vignettes (circular/oval dark regions)
-    # Vignettes are typically darker than text and have circular/oval shape
-    # Use adaptive threshold to find dark regions
-    _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    inverted = cv2.bitwise_not(binary)
-
-    # Find contours that could be vignettes
-    # Vignettes are typically circular/oval, medium-sized, and positioned in the middle
-    contours, _ = cv2.findContours(inverted, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    # Create mask for vignette removal
+def _vignette_strategy_build_mask(
+    gray: np.ndarray, contours: Any, h_img: int, w_img: int
+) -> np.ndarray:
+    """Build mask (255=keep, 0=replace) for circular/oval vignette regions."""
     mask = np.ones(gray.shape, dtype=np.uint8) * 255
-
-    h_img, w_img = gray.shape
     center_y, center_x = h_img // 2, w_img // 2
-
     for contour in contours:
-        # Check if contour is roughly circular/oval (vignette shape)
         area = cv2.contourArea(contour)
-        if area < 50 or area > (h_img * w_img * 0.3):  # Too small or too large
+        if area < 50 or area > (h_img * w_img * 0.3):
             continue
-
-        # Check circularity (vignettes are roughly circular)
         perimeter = cv2.arcLength(contour, True)
         if perimeter == 0:
             continue
         circularity = 4 * np.pi * area / (perimeter * perimeter)
-
-        # Vignettes have circularity around 0.7-1.0 (circular/oval)
-        if circularity < 0.5:  # Not circular enough
+        if circularity < 0.5:
             continue
-
-        # Check if it's positioned in the middle region (between letter groups)
         m = cv2.moments(contour)
         if m["m00"] == 0:
             continue
         cx = int(m["m10"] / m["m00"])
         cy = int(m["m01"] / m["m00"])
-
-        # Vignettes are typically in the middle horizontally, middle-upper vertically
         x_center_dist = abs(cx - center_x) / w_img
         y_center_dist = abs(cy - center_y) / h_img
-
-        # Should be roughly centered horizontally, can be slightly above center vertically
         if x_center_dist < 0.3 and y_center_dist < 0.4:
-            # This looks like a vignette - mask it out
-            cv2.drawContours(
-                mask, [contour], -1, (0.0,), -1
-            )  # Fill with black (will be replaced)
+            cv2.drawContours(mask, [contour], -1, (0.0,), -1)
+    return mask
 
-    # Apply mask: replace vignette regions with background color (light gray/white)
-    # Get background color (average of edge pixels)
-    edge_pixels = np.concatenate(
-        [
-            gray[0, :],  # Top edge
-            gray[-1, :],  # Bottom edge
-            gray[:, 0],  # Left edge
-            gray[:, -1],  # Right edge
-        ]
-    )
+
+def _vignette_strategy_apply_mask_and_postprocess(
+    gray: np.ndarray, mask: np.ndarray, up: np.ndarray
+) -> np.ndarray:
+    """Replace masked regions with background, then CLAHE + sharpen + threshold."""
+    edge_pixels = np.concatenate([gray[0, :], gray[-1, :], gray[:, 0], gray[:, -1]])
     background_color = int(np.median(edge_pixels))
-
-    # Replace masked regions with background color
     gray_masked = gray.copy()
     gray_masked[mask == 0] = background_color
-
-    # Apply standard preprocessing after vignette removal
     clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
     enhanced = clahe.apply(gray_masked)
-
-    # Sharpening
     kernel_sharpen = np.array(
         [[0, -0.5, 0], [-0.5, 3, -0.5], [0, -0.5, 0]], dtype=np.float32
     )
     sharpened = cv2.filter2D(enhanced, -1, kernel_sharpen)
-
-    # Adaptive threshold
     block_size = max(11, int(up.shape[1] / 10))
     if block_size % 2 == 0:
         block_size += 1
@@ -1176,8 +1160,27 @@ def _preprocess_plate_strategy_remove_vignette(plate_bgr: np.ndarray) -> np.ndar
         block_size,
         8,
     )
-
     return cv2.cvtColor(thr, cv2.COLOR_GRAY2BGR)
+
+
+def _preprocess_plate_strategy_remove_vignette(plate_bgr: np.ndarray) -> np.ndarray:
+    """Remove German plate vignette (circular seal) then standard preprocessing."""
+    if plate_bgr.size == 0:
+        return plate_bgr
+    h, w = plate_bgr.shape[:2]
+    scale = max(4.0, 400.0 / w, 100.0 / h)
+    up = cv2.resize(
+        plate_bgr,
+        (max(1, int(w * scale)), max(1, int(h * scale))),
+        interpolation=cv2.INTER_LANCZOS4,
+    )
+    gray = cv2.cvtColor(up, cv2.COLOR_BGR2GRAY)
+    _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    inverted = cv2.bitwise_not(binary)
+    contours, _ = cv2.findContours(inverted, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    h_img, w_img = gray.shape[:2]
+    mask = _vignette_strategy_build_mask(gray, contours, h_img, w_img)
+    return _vignette_strategy_apply_mask_and_postprocess(gray, mask, up)
 
 
 def _preprocess_plate_strategies(plate_bgr: np.ndarray) -> list[tuple[str, np.ndarray]]:
@@ -1202,6 +1205,81 @@ def _preprocess_plate_strategies(plate_bgr: np.ndarray) -> list[tuple[str, np.nd
         ),  # Remove German plate vignette
     ]
     return [(name, func(plate_bgr)) for name, func in strategies]
+
+
+def _select_preprocessing_strategies(
+    plate_bgr: np.ndarray,
+    *,
+    is_very_small: bool,
+    is_small: bool,
+) -> list[tuple[str, np.ndarray]]:
+    """Select which preprocessing strategies to try (all / most / fast+few)."""
+    all_strategies = _preprocess_plate_strategies(plate_bgr)
+    fast_strategies = ["original", "upscale_clahe", "remove_vignette"]
+
+    if is_very_small:
+        return all_strategies
+    if is_small:
+        return [s for s in all_strategies if s[0] not in ["flatten", "smooth_sharpen"]]
+
+    strategies_to_try: list[tuple[str, np.ndarray]] = []
+    for name, processed in all_strategies:
+        if name in fast_strategies or name.startswith("upscale_clahe"):
+            strategies_to_try.append((name, processed))
+    remaining = [
+        s
+        for s in all_strategies
+        if s[0] not in fast_strategies and not s[0].startswith("upscale_clahe")
+    ]
+    strategies_to_try.extend(remaining[:2])
+    return strategies_to_try
+
+
+def _should_early_exit_preprocessing(
+    is_very_small: bool,
+    strategy_name: str,
+    fast_strategies: list[str],
+    conf: float | None,
+    text: str,
+    remaining_count: int,
+) -> bool:
+    """Return True if we can skip remaining strategies (good result from fast strategy)."""
+    if is_very_small or remaining_count <= 0:
+        return False
+    if strategy_name not in fast_strategies and not strategy_name.startswith(
+        "upscale_clahe"
+    ):
+        return False
+    if conf is None or conf < 0.7 or len(text) < 4:
+        return False
+    import logging
+
+    logger = logging.getLogger(__name__)
+    logger.debug(
+        "Early exit: got good result (conf=%.2f, text=%s) from strategy %s, skipping %d remaining strategies",
+        conf,
+        text,
+        strategy_name,
+        remaining_count,
+    )
+    return True
+
+
+def _score_preprocessing_result(
+    x: tuple[str | None, float | None, dict[str, object]],
+    is_very_small: bool,
+) -> tuple[float, float, float]:
+    """Score (text, conf, meta) for choosing best: (priority, length_or_0, confidence)."""
+    min_conf_for_length = 0.3
+    text, conf, meta = x
+    text_len = len(text or "")
+    conf_val = conf or 0.0
+    strategy = meta.get("strategy_name", "unknown") if meta else "unknown"
+    strategy_boost = 0.15 if strategy == "flatten" and is_very_small else 0.0
+    conf_val_boosted = conf_val + strategy_boost
+    if conf_val_boosted < min_conf_for_length:
+        return (conf_val_boosted, 0.0, 0.0)
+    return (1.0, text_len, conf_val_boosted)
 
 
 def detect_plates_in_image(
@@ -1247,6 +1325,57 @@ def detect_plates_in_image(
     )
 
 
+def _process_one_plate_candidate(
+    cand: PlateCandidate,
+    image_bgr: np.ndarray,
+    width: int,
+    height: int,
+    ocr: PlateOcr,
+    ts: datetime,
+    *,
+    include_crops: bool,
+    crop_max_width: int,
+    crop_jpeg_quality: int,
+    image_path: Path | None,
+) -> PlateDetection:
+    """Run OCR on one candidate and return PlateDetection."""
+    bbox = cand.bbox.clamp(width=width, height=height)
+    crop = image_bgr[bbox.y1 : bbox.y2, bbox.x1 : bbox.x2]
+    text, ocr_conf, ocr_meta = ocr.recognize(crop)
+    raw_text_value = ocr_meta.get("raw_text")
+    raw_text = raw_text_value if isinstance(raw_text_value, str) else text
+    raw_confidence = ocr_meta.get("raw_confidence")
+    raw_ocr_conf = (
+        float(raw_confidence) if isinstance(raw_confidence, float | int) else ocr_conf
+    )
+    crop_b64 = (
+        _crop_preview_jpeg_b64(
+            crop, max_width=crop_max_width, quality=crop_jpeg_quality
+        )
+        if include_crops
+        else None
+    )
+    reliability = _combine_reliability(
+        detection_confidence=cand.confidence, ocr_confidence=ocr_conf
+    )
+    return PlateDetection(
+        captured_at=ts,
+        bbox=bbox,
+        detection_confidence=cand.confidence,
+        text=text,
+        ocr_confidence=ocr_conf,
+        raw_text=raw_text,
+        raw_ocr_confidence=raw_ocr_conf,
+        reliability=reliability,
+        crop_jpeg_b64=crop_b64,
+        metadata={
+            "detector": cand.metadata,
+            "ocr": ocr_meta,
+            "image_path": str(image_path) if image_path is not None else None,
+        },
+    )
+
+
 def detect_plates_from_candidates(
     *,
     image_bgr: np.ndarray,
@@ -1257,83 +1386,43 @@ def detect_plates_from_candidates(
     include_crops: bool = False,
     crop_max_width: int = 320,
     crop_jpeg_quality: int = 75,
-    yolo_time: float | None = None,  # YOLO detection time (for logging)
+    yolo_time: float | None = None,
 ) -> ImagePlateDetections:
-    """Run OCR (and optional crop previews) for provided plate candidates.
-
-    This is useful for dataset evaluation where bounding boxes come from labels
-    rather than a detector model.
-    """
+    """Run OCR (and optional crop previews) for provided plate candidates."""
     import time
 
     ts = captured_at or datetime.now(UTC)
     if ts.tzinfo is None:
         ts = ts.replace(tzinfo=UTC)
-
-    # Time OCR processing
     ocr_start = time.perf_counter()
     height, width = image_bgr.shape[:2]
-    detections: list[PlateDetection] = []
-    for cand in candidates:
-        bbox = cand.bbox.clamp(width=width, height=height)
-        crop = image_bgr[bbox.y1 : bbox.y2, bbox.x1 : bbox.x2]
-        text, ocr_conf, ocr_meta = ocr.recognize(crop)
-        raw_text_value = ocr_meta.get("raw_text")
-        raw_text = raw_text_value if isinstance(raw_text_value, str) else text
-        raw_confidence = ocr_meta.get("raw_confidence")
-        raw_ocr_conf = (
-            float(raw_confidence)
-            if isinstance(raw_confidence, float | int)
-            else ocr_conf
+    detections = [
+        _process_one_plate_candidate(
+            cand,
+            image_bgr,
+            width,
+            height,
+            ocr,
+            ts,
+            include_crops=include_crops,
+            crop_max_width=crop_max_width,
+            crop_jpeg_quality=crop_jpeg_quality,
+            image_path=image_path,
         )
-        crop_b64 = (
-            _crop_preview_jpeg_b64(
-                crop,
-                max_width=crop_max_width,
-                quality=crop_jpeg_quality,
-            )
-            if include_crops
-            else None
-        )
-
-        reliability = _combine_reliability(
-            detection_confidence=cand.confidence,
-            ocr_confidence=ocr_conf,
-        )
-        detections.append(
-            PlateDetection(
-                captured_at=ts,
-                bbox=bbox,
-                detection_confidence=cand.confidence,
-                text=text,
-                ocr_confidence=ocr_conf,
-                raw_text=raw_text,
-                raw_ocr_confidence=raw_ocr_conf,
-                reliability=reliability,
-                crop_jpeg_b64=crop_b64,
-                metadata={
-                    "detector": cand.metadata,
-                    "ocr": ocr_meta,
-                    "image_path": str(image_path) if image_path is not None else None,
-                },
-            )
-        )
+        for cand in candidates
+    ]
     ocr_time = time.perf_counter() - ocr_start
-
-    # Log timing if YOLO time was provided (from detect_plates_in_image)
     if yolo_time is not None:
         import logging
 
         logger = logging.getLogger(__name__)
-        total_time = yolo_time + ocr_time
         logger.info(
             "Detection timing: YOLO=%.3fs, OCR=%.3fs, total=%.3fs (candidates=%d)",
             yolo_time,
             ocr_time,
-            total_time,
+            yolo_time + ocr_time,
             len(candidates),
         )
-
     return ImagePlateDetections(
         captured_at=ts,
         image_size=(width, height),
@@ -1459,37 +1548,7 @@ class PaddleOcrPlateRecognizer:
                 {"candidates": 0, "raw_text": None, "raw_confidence": None},
             )
 
-        # Parse PaddleOCR results (format varies by version)
-        best_text: str | None = None
-        best_conf: float = 0.0
-
-        for line in results[0]:
-            if not line or len(line) < 2:
-                continue
-
-            text: str | None = None
-            conf: float = 0.0
-
-            if isinstance(line[1], (list, tuple)) and len(line[1]) >= 2:
-                text_val, conf_val = line[1][0], line[1][1]
-                text = str(text_val).strip() if text_val else None
-                try:
-                    conf = float(conf_val)
-                except (ValueError, TypeError):
-                    conf = 0.0
-            elif len(line) >= 3:
-                text_val = line[1]
-                conf_val = line[2] if len(line) > 2 else 0.0
-                text = str(text_val).strip() if text_val else None
-                try:
-                    conf = float(conf_val)
-                except (ValueError, TypeError):
-                    conf = 0.0
-
-            if text and conf > best_conf:
-                best_text = text
-                best_conf = conf
-
+        best_text, best_conf = _best_paddle_line(results[0])
         if not best_text:
             return (
                 None,
@@ -1501,35 +1560,17 @@ class PaddleOcrPlateRecognizer:
                 },
             )
 
-        if self._allowlist:
-            best_text = "".join(
-                c for c in best_text if c.upper() in self._allowlist_chars
-            )
-
-        # Remove vignette characters (spurious single chars from circular seals)
-        text_no_vignette = _remove_vignette_characters(best_text)
-
-        # Apply position-based character correction
-        corrected_text = _correct_plate_characters_by_position(text_no_vignette)
-
-        normalized_text = (
-            _normalize_plate_text(corrected_text) if self._normalize else corrected_text
+        return _plate_ocr_post_process(
+            best_text,
+            best_conf,
+            len(results[0]),
+            "paddleocr",
+            allowlist=self._allowlist,
+            allowlist_chars=self._allowlist_chars,
+            normalize=self._normalize,
+            min_confidence=self._min_confidence,
+            preprocess=self._preprocess,
         )
-        meta: dict[str, object] = {
-            "candidates": len(results[0]),
-            "raw_text": best_text,
-            "corrected_text": corrected_text,
-            "raw_confidence": best_conf,
-            "normalized_text": normalized_text if self._normalize else None,
-            "preprocess": self._preprocess,
-            "allowlist": self._allowlist,
-            "engine": "paddleocr",
-        }
-
-        if best_conf < self._min_confidence:
-            return None, best_conf, meta
-
-        return (normalized_text if self._normalize else corrected_text), best_conf, meta
 
     def _prepare_plate_rgb_for_ocr(self, plate_bgr: np.ndarray) -> np.ndarray:
         h, w = plate_bgr.shape[:2]
@@ -1579,67 +1620,13 @@ class TesseractOcrPlateRecognizer:
         config = "--psm 7"
         if self._allowlist:
             config += f" -c tessedit_char_whitelist={self._allowlist_chars}"
-
-        # Try multiple PSM modes
-        psm_modes = ["7", "11", "6"]
-        best_text: str | None = None
-        best_conf: float = 0.0
-
-        for psm in psm_modes:
-            psm_config = f"--psm {psm}"
-            if self._allowlist:
-                psm_config += f" -c tessedit_char_whitelist={self._allowlist_chars}"
-
-            try:
-                data = self._pytesseract.image_to_data(
-                    plate_rgb,
-                    lang=self._lang,
-                    config=psm_config,
-                    output_type=self._pytesseract.Output.DICT,
-                )
-
-                texts: list[str] = []
-                confidences: list[float] = []
-
-                num_words = len(data.get("text", []))
-                for i in range(num_words):
-                    text = (
-                        data.get("text", [""])[i]
-                        if i < len(data.get("text", []))
-                        else ""
-                    )
-                    if text and text.strip():
-                        conf_val = (
-                            int(data.get("conf", [0])[i])
-                            if i < len(data.get("conf", []))
-                            else 0
-                        )
-                        if conf_val > 0:
-                            texts.append(text.strip())
-                            confidences.append(float(conf_val) / 100.0)
-
-                if texts:
-                    combined = " ".join(texts).strip()
-                    avg_conf = (
-                        sum(confidences) / len(confidences) if confidences else 0.5
-                    )
-                    if avg_conf > best_conf:
-                        best_text = combined
-                        best_conf = avg_conf
-            except Exception:
-                continue
-
-        if not best_text:
-            try:
-                simple_text = self._pytesseract.image_to_string(
-                    plate_rgb, lang=self._lang, config=config
-                ).strip()
-                if simple_text:
-                    best_text = simple_text
-                    best_conf = 0.5
-            except Exception:
-                pass
-
+        cfg = {
+            "lang": self._lang,
+            "allowlist": self._allowlist,
+            "allowlist_chars": self._allowlist_chars,
+            "config": config,
+        }
+        best_text, best_conf = _tesseract_best_result(self._pytesseract, plate_rgb, cfg)
         if not best_text:
             return (
                 None,
@@ -1647,30 +1634,17 @@ class TesseractOcrPlateRecognizer:
                 {"candidates": 0, "raw_text": None, "raw_confidence": None},
             )
 
-        # Remove vignette characters (spurious single chars from circular seals)
-        text_no_vignette = _remove_vignette_characters(best_text)
-
-        # Apply position-based character correction
-        corrected_text = _correct_plate_characters_by_position(text_no_vignette)
-
-        normalized_text = (
-            _normalize_plate_text(corrected_text) if self._normalize else corrected_text
+        return _plate_ocr_post_process(
+            best_text,
+            best_conf,
+            1,
+            "tesseract",
+            allowlist=self._allowlist,
+            allowlist_chars=self._allowlist_chars,
+            normalize=self._normalize,
+            min_confidence=self._min_confidence,
+            preprocess=self._preprocess,
         )
-        meta: dict[str, object] = {
-            "candidates": 1,
-            "raw_text": best_text,
-            "corrected_text": corrected_text,
-            "raw_confidence": best_conf,
-            "normalized_text": normalized_text if self._normalize else None,
-            "preprocess": self._preprocess,
-            "allowlist": self._allowlist,
-            "engine": "tesseract",
-        }
-
-        if best_conf < self._min_confidence:
-            return None, best_conf, meta
-
-        return (normalized_text if self._normalize else corrected_text), best_conf, meta
 
     def _prepare_plate_rgb_for_ocr(self, plate_bgr: np.ndarray) -> np.ndarray:
         h, w = plate_bgr.shape[:2]
@@ -1712,76 +1686,32 @@ class DotsOcrPlateRecognizer:
         self, plate_bgr: np.ndarray
     ) -> tuple[str | None, float | None, dict[str, object]]:
         plate_rgb = self._prepare_plate_rgb_for_ocr(plate_bgr)
-
-        # Convert numpy array to PIL Image for dots.ocr
         from PIL import Image
 
         pil_image = Image.fromarray(plate_rgb)
-
         try:
-            # Use OCR-only prompt for license plates
             result = self._parser.parse(
                 pil_image,
-                prompt_mode="prompt_ocr",  # Text extraction only
+                prompt_mode="prompt_ocr",
             )
-
-            # Extract text from result
-            text = result.markdown.strip() if hasattr(result, "markdown") else ""
-            if not text and hasattr(result, "json"):
-                # Fallback: extract from JSON structure
-                import json
-
-                data = (
-                    json.loads(result.json)
-                    if isinstance(result.json, str)
-                    else result.json
-                )
-                # Extract text from layout elements
-                texts = []
-                for elem in data.get("layout", []):
-                    if elem.get("category") == "Text" and elem.get("text"):
-                        texts.append(elem["text"])
-                text = " ".join(texts).strip()
-
+            text = _dots_ocr_extract_text(result)
             if not text:
                 return (
                     None,
                     None,
                     {"candidates": 0, "raw_text": None, "raw_confidence": None},
                 )
-
-            # dots.ocr doesn't provide confidence scores, use default
-            conf = 0.7  # Default confidence for dots.ocr
-
-            if self._allowlist:
-                text = "".join(c for c in text if c.upper() in self._allowlist_chars)
-
-            # Remove vignette characters (spurious single chars from circular seals)
-            text_no_vignette = _remove_vignette_characters(text)
-
-            # Apply position-based character correction
-            corrected_text = _correct_plate_characters_by_position(text_no_vignette)
-
-            normalized_text = (
-                _normalize_plate_text(corrected_text)
-                if self._normalize
-                else corrected_text
+            return _plate_ocr_post_process(
+                text,
+                0.7,
+                1,
+                "dotsocr",
+                allowlist=self._allowlist,
+                allowlist_chars=self._allowlist_chars,
+                normalize=self._normalize,
+                min_confidence=self._min_confidence,
+                preprocess=self._preprocess,
             )
-            meta: dict[str, object] = {
-                "candidates": 1,
-                "raw_text": text,
-                "corrected_text": corrected_text,
-                "raw_confidence": conf,
-                "normalized_text": normalized_text if self._normalize else None,
-                "preprocess": self._preprocess,
-                "allowlist": self._allowlist,
-                "engine": "dotsocr",
-            }
-
-            if conf < self._min_confidence:
-                return None, conf, meta
-
-            return (normalized_text if self._normalize else corrected_text), conf, meta
         except Exception as e:
             return (
                 None,
@@ -1834,65 +1764,37 @@ class ChandraOcrPlateRecognizer:
         self, plate_bgr: np.ndarray
     ) -> tuple[str | None, float | None, dict[str, object]]:
         plate_rgb = self._prepare_plate_rgb_for_ocr(plate_bgr)
-
-        # Convert numpy array to PIL Image for Chandra
         from PIL import Image
 
         pil_image = Image.fromarray(plate_rgb)
-
         try:
-            # Chandra expects a list of images
             results = self._manager.generate([pil_image])
-
             if not results or not results[0]:
                 return (
                     None,
                     None,
                     {"candidates": 0, "raw_text": None, "raw_confidence": None},
                 )
-
-            result = results[0]
-            text = result.markdown.strip() if hasattr(result, "markdown") else ""
-
+            text = (
+                results[0].markdown.strip() if hasattr(results[0], "markdown") else ""
+            )
             if not text:
                 return (
                     None,
                     None,
                     {"candidates": 0, "raw_text": None, "raw_confidence": None},
                 )
-
-            # Chandra doesn't provide confidence scores, use default
-            conf = 0.7  # Default confidence for Chandra
-
-            if self._allowlist:
-                text = "".join(c for c in text if c.upper() in self._allowlist_chars)
-
-            # Remove vignette characters (spurious single chars from circular seals)
-            text_no_vignette = _remove_vignette_characters(text)
-
-            # Apply position-based character correction
-            corrected_text = _correct_plate_characters_by_position(text_no_vignette)
-
-            normalized_text = (
-                _normalize_plate_text(corrected_text)
-                if self._normalize
-                else corrected_text
+            return _plate_ocr_post_process(
+                text,
+                0.7,
+                1,
+                "chandra",
+                allowlist=self._allowlist,
+                allowlist_chars=self._allowlist_chars,
+                normalize=self._normalize,
+                min_confidence=self._min_confidence,
+                preprocess=self._preprocess,
             )
-            meta: dict[str, object] = {
-                "candidates": 1,
-                "raw_text": text,
-                "corrected_text": corrected_text,
-                "raw_confidence": conf,
-                "normalized_text": normalized_text if self._normalize else None,
-                "preprocess": self._preprocess,
-                "allowlist": self._allowlist,
-                "engine": "chandra",
-            }
-
-            if conf < self._min_confidence:
-                return None, conf, meta
-
-            return (normalized_text if self._normalize else corrected_text), conf, meta
         except Exception as e:
             return (
                 None,
@@ -1977,6 +1879,17 @@ def create_plate_recognizer(
     raise ValueError(
         f"Unknown OCR engine: {engine}. Choose from: easyocr, paddleocr, tesseract, dotsocr, chandra"
     )
+
+
+def _consensus_match_score(normalized: str, other_normalized: str) -> float:
+    """Return 1.0 for exact match, 0.5 for partial (>=75% similarity), 0.0 otherwise."""
+    if normalized == other_normalized:
+        return 1.0
+    if not normalized or not other_normalized:
+        return 0.0
+    common_chars = sum(1 for c in normalized if c in other_normalized)
+    similarity = common_chars / max(len(normalized), len(other_normalized))
+    return 0.5 if similarity >= 0.75 else 0.0
 
 
 class EnsemblePlateRecognizer:
@@ -2159,31 +2072,16 @@ class EnsemblePlateRecognizer:
         text = cast("str", result.get("text", ""))
         if not text:
             return 0.0
-
-        # Normalize text for comparison
         normalized = _normalize_plate_text(text)
-
         matches = 0.0
         total = 0
-
         for other in all_results:
             other_text = other.get("text")
             if not other_text or other == result:
                 continue
-
             total += 1
             other_normalized = _normalize_plate_text(cast("str", other_text))
-
-            # Exact match
-            if normalized == other_normalized:
-                matches += 1.0
-            # Partial match (75%+ characters match)
-            elif len(normalized) > 0 and len(other_normalized) > 0:
-                common_chars = sum(1 for c in normalized if c in other_normalized)
-                similarity = common_chars / max(len(normalized), len(other_normalized))
-                if similarity >= 0.75:
-                    matches += 0.5
-
+            matches += _consensus_match_score(normalized, other_normalized)
         return matches / total if total > 0 else 0.0
 
     def _get_engine_reliability(self, engine: str) -> float:
