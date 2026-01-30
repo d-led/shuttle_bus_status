@@ -188,6 +188,60 @@ def _candidates_from_arrays(
     return candidates
 
 
+def _easyocr_upscale_if_small(plate_rgb: np.ndarray) -> np.ndarray:
+    """Upscale plate image if very small (target ~200px wide, 60px tall)."""
+    h, w = plate_rgb.shape[:2]
+    if w >= 100 and h >= 30:
+        return plate_rgb
+    scale = max(3.0, 200.0 / w, 60.0 / h)
+    new_w = max(1, int(w * scale))
+    new_h = max(1, int(h * scale))
+    return cv2.resize(plate_rgb, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
+
+
+def _easyocr_readtext_kwargs(base: dict[str, object]) -> dict[str, object]:
+    """EasyOCR readtext kwargs for license plates (single line, low thresholds)."""
+    kwargs = dict(base)
+    kwargs["paragraph"] = False
+    kwargs["width_ths"] = 0.05
+    kwargs["height_ths"] = 0.05
+    kwargs["detail"] = 1
+    kwargs["slope_ths"] = 0.1
+    kwargs["ycenter_ths"] = 0.7
+    kwargs["mag_ratio"] = 1.5
+    return kwargs
+
+
+def _easyocr_single_post_process(
+    best: tuple[str, float],
+    candidates: int,
+    strategy_name: str,
+    recognizer: Any,
+) -> tuple[str | None, float | None, dict[str, object]]:
+    """Vignette removal, correction, normalize; build meta; return (text, conf, meta)."""
+    raw_text, raw_conf = best
+    text_no_vignette = _remove_vignette_characters(raw_text)
+    corrected_text = _correct_plate_characters_by_position(text_no_vignette)
+    normalize = bool(getattr(recognizer, "_normalize", False))
+    normalized_text = (
+        _normalize_plate_text(corrected_text) if normalize else corrected_text
+    )
+    meta: dict[str, object] = {
+        "candidates": candidates,
+        "raw_text": raw_text,
+        "corrected_text": corrected_text,
+        "raw_confidence": raw_conf,
+        "normalized_text": normalized_text if normalize else None,
+        "preprocess": bool(getattr(recognizer, "_preprocess", False)),
+        "allowlist": bool(getattr(recognizer, "_allowlist", False)),
+        "strategy_name": strategy_name,
+    }
+    min_confidence = float(getattr(recognizer, "_min_confidence", 0.5))
+    if raw_conf < min_confidence:
+        return None, raw_conf, meta
+    return (normalized_text if normalize else corrected_text), raw_conf, meta
+
+
 class EasyOcrPlateRecognizer:
     def __init__(
         self,
@@ -256,22 +310,19 @@ class EasyOcrPlateRecognizer:
         all_results: list[tuple[str | None, float | None, dict[str, object]]] = []
         fast_strategies = ["original", "upscale_clahe", "remove_vignette"]
 
+        prep_cfg = {
+            "is_very_small": is_very_small,
+            "fast_strategies": fast_strategies,
+            "strategies_len": len(strategies_to_try),
+        }
         for strategy_name, processed in strategies_to_try:
             plate_rgb = cv2.cvtColor(processed, cv2.COLOR_BGR2RGB)
-            text, conf, meta = self._recognize_single(
-                plate_rgb, strategy_name=strategy_name
-            )
-            if text is not None:
-                all_results.append((text, conf, meta))
-                if _should_early_exit_preprocessing(
-                    is_very_small,
-                    strategy_name,
-                    fast_strategies,
-                    conf,
-                    text,
-                    len(strategies_to_try) - len(all_results),
-                ):
-                    break
+            result = self._recognize_single(plate_rgb, strategy_name=strategy_name)
+            prep_cfg["strategy_name"] = strategy_name
+            if _append_preprocessing_result_and_should_break(
+                all_results, result, prep_cfg
+            ):
+                break
 
         if not all_results:
             return (
@@ -288,49 +339,15 @@ class EasyOcrPlateRecognizer:
             key=lambda x: _score_preprocessing_result(x, is_very_small),
         )
         best_text, best_conf, best_meta = best_result
-        all_strategies = _preprocess_plate_strategies(plate_bgr)
-        best_meta["preprocessing_strategies_tried"] = len(strategies_to_try)
-        best_meta["preprocessing_strategies_available"] = len(all_strategies)
-        best_meta["preprocessing_strategy_used"] = best_meta.get(
-            "strategy_name", "unknown"
-        )
-        best_meta["all_strategy_results"] = [
-            {"strategy": m.get("strategy_name", "unknown"), "text": t, "conf": c}
-            for t, c, m in all_results
-        ]
+        _add_preprocessing_meta(best_meta, all_results, strategies_to_try, plate_bgr)
         return best_text, best_conf, best_meta
 
     def _recognize_single(
         self, plate_rgb: np.ndarray, strategy_name: str = "unknown"
     ) -> tuple[str | None, float | None, dict[str, object]]:
         """Recognize text from a single preprocessed image."""
-        # Always upscale very small images for better OCR (even if not preprocessing)
-        h, w = plate_rgb.shape[:2]
-        if w < 100 or h < 30:
-            # Upscale small crops significantly
-            scale = max(
-                3.0, 200.0 / w, 60.0 / h
-            )  # Target at least 200px wide or 60px tall
-            new_w = max(1, int(w * scale))
-            new_h = max(1, int(h * scale))
-            plate_rgb = cv2.resize(
-                plate_rgb, (new_w, new_h), interpolation=cv2.INTER_CUBIC
-            )
-
-        # EasyOCR parameters optimized for license plates
-        kwargs = self._easyocr_kwargs()
-        kwargs["paragraph"] = False  # Treat as single line
-        kwargs["width_ths"] = (
-            0.05  # Very low threshold for wide plates (handles spaces)
-        )
-        kwargs["height_ths"] = 0.05  # Very low threshold for height
-        kwargs["detail"] = 1  # Get detailed results
-        # More aggressive text detection for plates with spaces/separators
-        kwargs["slope_ths"] = 0.1  # Allow more slanted text
-        kwargs["ycenter_ths"] = 0.7  # More permissive vertical alignment (was 0.5)
-        # Additional parameters to improve detection of spaced text
-        kwargs["mag_ratio"] = 1.5  # Magnification ratio for better small text detection
-
+        plate_rgb = _easyocr_upscale_if_small(plate_rgb)
+        kwargs = _easyocr_readtext_kwargs(self._easyocr_kwargs())
         results = self._reader.readtext(plate_rgb, **kwargs)
         best = _best_easyocr_candidate(results)
         if best is None:
@@ -344,35 +361,7 @@ class EasyOcrPlateRecognizer:
                     "strategy_name": strategy_name,
                 },
             )
-
-        raw_text, raw_conf = best
-
-        # Remove vignette characters (spurious single chars from circular seals)
-        text_no_vignette = _remove_vignette_characters(raw_text)
-
-        # Apply position-based character correction
-        corrected_text = _correct_plate_characters_by_position(text_no_vignette)
-
-        # Normalize if enabled
-        normalized_text = (
-            _normalize_plate_text(corrected_text) if self._normalize else corrected_text
-        )
-
-        meta: dict[str, object] = {
-            "candidates": len(results),
-            "raw_text": raw_text,
-            "corrected_text": corrected_text,
-            "raw_confidence": raw_conf,
-            "normalized_text": normalized_text if self._normalize else None,
-            "preprocess": self._preprocess,
-            "allowlist": self._allowlist,
-            "strategy_name": strategy_name,
-        }
-
-        if raw_conf < self._min_confidence:
-            return None, raw_conf, meta
-
-        return (normalized_text if self._normalize else corrected_text), raw_conf, meta
+        return _easyocr_single_post_process(best, len(results), strategy_name, self)
 
     def _prepare_plate_rgb_for_ocr(self, plate_bgr: np.ndarray) -> np.ndarray:
         """Prepare plate image for OCR (legacy single-strategy path)."""
@@ -675,20 +664,18 @@ def _tesseract_parse_image_to_data(
 
 
 def _tesseract_try_psm(
-    pt: Any,
-    plate_rgb: np.ndarray,
-    lang: str,
-    psm: str,
-    allowlist: bool,
-    allowlist_chars: str,
+    pt: Any, plate_rgb: np.ndarray, cfg: dict[str, Any]
 ) -> tuple[str, float] | None:
-    """Run Tesseract with one PSM; return (combined_text, avg_conf) or None."""
-    psm_config = f"--psm {psm}"
-    if allowlist:
-        psm_config += f" -c tessedit_char_whitelist={allowlist_chars}"
+    """Run Tesseract with one PSM; return (combined_text, avg_conf) or None. cfg: lang, psm, allowlist, allowlist_chars."""
+    psm_config = f"--psm {cfg.get('psm', '7')}"
+    if cfg.get("allowlist"):
+        psm_config += f" -c tessedit_char_whitelist={cfg.get('allowlist_chars', '')}"
     try:
         data = pt.image_to_data(
-            plate_rgb, lang=lang, config=psm_config, output_type=pt.Output.DICT
+            plate_rgb,
+            lang=str(cfg.get("lang", "")),
+            config=psm_config,
+            output_type=pt.Output.DICT,
         )
         return _tesseract_parse_image_to_data(data)
     except Exception:
@@ -721,10 +708,10 @@ def _tesseract_best_result(
     config_str = str(cfg.get("config", "--psm 7"))
     best_text: str | None = None
     best_conf: float = 0.0
+    psm_cfg = {"lang": lang, "allowlist": allowlist, "allowlist_chars": allowlist_chars}
     for psm in ["7", "11", "6"]:
-        parsed = _tesseract_try_psm(
-            pt, plate_rgb, lang, psm, allowlist, allowlist_chars
-        )
+        psm_cfg["psm"] = psm
+        parsed = _tesseract_try_psm(pt, plate_rgb, psm_cfg)
         if parsed and parsed[1] > best_conf:
             best_text, best_conf = parsed[0], parsed[1]
     if not best_text:
@@ -1029,65 +1016,36 @@ def _preprocess_plate_strategy_flatten(plate_bgr: np.ndarray) -> np.ndarray:
     return _flatten_strategy_sharpen_threshold(eq, up)
 
 
-def _preprocess_plate_strategy_smooth_sharpen(plate_bgr: np.ndarray) -> np.ndarray:
-    """Strategy 7: Smoothing + sharpening for better edge contrast.
-
-    This strategy focuses on:
-    1. Aggressive upscaling for small crops
-    2. Edge-preserving smoothing to reduce noise while keeping edges
-    3. Unsharp masking for controlled sharpening
-    4. Contrast enhancement with CLAHE
-    5. Adaptive thresholding optimized for edge clarity
-
-    Unlike flattening (which subtracts background), this preserves the full
-    image structure while enhancing edges through smoothing + sharpening.
-    """
-    if plate_bgr.size == 0:
-        return plate_bgr
-
+def _smooth_sharpen_upscale_and_enhance(
+    plate_bgr: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Upscale, denoise, bilateral smooth, unsharp, sharpen, CLAHE, normalize. Returns (normalized, up)."""
     h, w = plate_bgr.shape[:2]
-
-    # Aggressive upscaling for tiny crops
     scale = max(6.0, 500.0 / w, 150.0 / h)
     up = cv2.resize(
         plate_bgr,
         (max(1, int(w * scale)), max(1, int(h * scale))),
-        interpolation=cv2.INTER_LANCZOS4,  # Best quality for upscaling
+        interpolation=cv2.INTER_LANCZOS4,
     )
-
-    # Convert to grayscale
     gray = cv2.cvtColor(up, cv2.COLOR_BGR2GRAY)
-
-    # Step 1: Initial denoising (light, preserves edges)
     denoised = cv2.fastNlMeansDenoising(
         gray, h=7, templateWindowSize=5, searchWindowSize=15
     )
-
-    # Step 2: Edge-preserving smoothing with bilateral filter
-    # Parameters tuned for license plates: preserve edges, smooth background
     smoothed = cv2.bilateralFilter(denoised, d=5, sigmaColor=50, sigmaSpace=50)
-
-    # Step 3: Unsharp masking for controlled sharpening
-    # Create a slightly blurred version
     blurred = cv2.GaussianBlur(smoothed, (3, 3), 1.0)
-    # Unsharp mask: original + (original - blurred) * amount
     unsharp = cv2.addWeighted(smoothed, 1.0 + 0.8, blurred, -0.8, 0)
-
-    # Step 4: Additional light sharpening with kernel (more subtle)
     kernel_sharpen = np.array(
         [[0, -0.5, 0], [-0.5, 3, -0.5], [0, -0.5, 0]], dtype=np.float32
     )
     sharpened = cv2.filter2D(unsharp, -1, kernel_sharpen)
-
-    # Step 5: Contrast enhancement with CLAHE (moderate, not too aggressive)
     clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
     enhanced = clahe.apply(sharpened)
-
-    # Step 6: Normalize to full dynamic range
     normalized = cv2.normalize(enhanced, None, 0.0, 255.0, cv2.NORM_MINMAX)  # type: ignore[call-overload]
+    return normalized, up
 
-    # Step 7: Adaptive thresholding optimized for edge clarity
-    # Block size based on image size (smaller for better edge detection)
+
+def _smooth_sharpen_threshold(normalized: np.ndarray, up: np.ndarray) -> np.ndarray:
+    """Adaptive threshold + morphological cleanup; return BGR."""
     block_size = max(11, int(up.shape[1] / 10))
     if block_size % 2 == 0:
         block_size += 1
@@ -1097,14 +1055,19 @@ def _preprocess_plate_strategy_smooth_sharpen(plate_bgr: np.ndarray) -> np.ndarr
         cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
         cv2.THRESH_BINARY,
         block_size,
-        8,  # Moderate C value for balanced contrast
+        8,
     )
-
-    # Very light morphological cleanup (minimal, preserve edges)
     kernel_clean = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
     cleaned = cv2.morphologyEx(thr, cv2.MORPH_CLOSE, kernel_clean, iterations=1)
-
     return cv2.cvtColor(cleaned, cv2.COLOR_GRAY2BGR)
+
+
+def _preprocess_plate_strategy_smooth_sharpen(plate_bgr: np.ndarray) -> np.ndarray:
+    """Smoothing + sharpening for better edge contrast (small crops)."""
+    if plate_bgr.size == 0:
+        return plate_bgr
+    normalized, up = _smooth_sharpen_upscale_and_enhance(plate_bgr)
+    return _smooth_sharpen_threshold(normalized, up)
 
 
 def _vignette_strategy_build_mask(
@@ -1235,34 +1198,66 @@ def _select_preprocessing_strategies(
     return strategies_to_try
 
 
-def _should_early_exit_preprocessing(
-    is_very_small: bool,
-    strategy_name: str,
-    fast_strategies: list[str],
-    conf: float | None,
-    text: str,
-    remaining_count: int,
-) -> bool:
+def _should_early_exit_preprocessing(cfg: dict[str, Any]) -> bool:
     """Return True if we can skip remaining strategies (good result from fast strategy)."""
-    if is_very_small or remaining_count <= 0:
+    if cfg.get("is_very_small") or cfg.get("remaining_count", 0) <= 0:
         return False
-    if strategy_name not in fast_strategies and not strategy_name.startswith(
-        "upscale_clahe"
+    name = str(cfg.get("strategy_name", ""))
+    fast = cfg.get("fast_strategies") or []
+    if name not in fast and not name.startswith("upscale_clahe"):
+        return False
+    if (
+        cfg.get("conf") is None
+        or cfg.get("conf", 0) < 0.7
+        or len(str(cfg.get("text", ""))) < 4
     ):
-        return False
-    if conf is None or conf < 0.7 or len(text) < 4:
         return False
     import logging
 
     logger = logging.getLogger(__name__)
     logger.debug(
         "Early exit: got good result (conf=%.2f, text=%s) from strategy %s, skipping %d remaining strategies",
-        conf,
-        text,
-        strategy_name,
-        remaining_count,
+        cfg.get("conf"),
+        cfg.get("text"),
+        name,
+        cfg.get("remaining_count", 0),
     )
     return True
+
+
+def _append_preprocessing_result_and_should_break(
+    all_results: list[tuple[str | None, float | None, dict[str, object]]],
+    result: tuple[str | None, float | None, dict[str, object]] | None,
+    cfg: dict[str, Any],
+) -> bool:
+    """Append result to all_results; return True if we should break. cfg: is_very_small, strategy_name, fast_strategies, strategies_len."""
+    if result is None or result[0] is None:
+        return False
+    all_results.append(result)
+    cfg = {
+        **cfg,
+        "conf": result[1],
+        "text": result[0],
+        "remaining_count": cfg.get("strategies_len", 0) - len(all_results),
+    }
+    return _should_early_exit_preprocessing(cfg)
+
+
+def _add_preprocessing_meta(
+    best_meta: dict[str, object],
+    all_results: list[tuple[str | None, float | None, dict[str, object]]],
+    strategies_to_try: list[tuple[str, np.ndarray]],
+    plate_bgr: np.ndarray,
+) -> None:
+    """Add preprocessing strategy metadata to best_meta (mutates best_meta)."""
+    all_strategies = _preprocess_plate_strategies(plate_bgr)
+    best_meta["preprocessing_strategies_tried"] = len(strategies_to_try)
+    best_meta["preprocessing_strategies_available"] = len(all_strategies)
+    best_meta["preprocessing_strategy_used"] = best_meta.get("strategy_name", "unknown")
+    best_meta["all_strategy_results"] = [
+        {"strategy": m.get("strategy_name", "unknown"), "text": t, "conf": c}
+        for t, c, m in all_results
+    ]
 
 
 def _score_preprocessing_result(
@@ -1328,17 +1323,13 @@ def detect_plates_in_image(
 def _process_one_plate_candidate(
     cand: PlateCandidate,
     image_bgr: np.ndarray,
-    width: int,
-    height: int,
     ocr: PlateOcr,
-    ts: datetime,
-    *,
-    include_crops: bool,
-    crop_max_width: int,
-    crop_jpeg_quality: int,
-    image_path: Path | None,
+    ctx: dict[str, Any],
 ) -> PlateDetection:
-    """Run OCR on one candidate and return PlateDetection."""
+    """Run OCR on one candidate and return PlateDetection. ctx: ts, width, height, include_crops, crop_max_width, crop_jpeg_quality, image_path."""
+    ts = cast("datetime", ctx["ts"])
+    width = int(ctx.get("width", 0))
+    height = int(ctx.get("height", 0))
     bbox = cand.bbox.clamp(width=width, height=height)
     crop = image_bgr[bbox.y1 : bbox.y2, bbox.x1 : bbox.x2]
     text, ocr_conf, ocr_meta = ocr.recognize(crop)
@@ -1348,6 +1339,10 @@ def _process_one_plate_candidate(
     raw_ocr_conf = (
         float(raw_confidence) if isinstance(raw_confidence, float | int) else ocr_conf
     )
+    include_crops = bool(ctx.get("include_crops", False))
+    crop_max_width = int(ctx.get("crop_max_width", 320))
+    crop_jpeg_quality = int(ctx.get("crop_jpeg_quality", 75))
+    image_path = ctx.get("image_path")
     crop_b64 = (
         _crop_preview_jpeg_b64(
             crop, max_width=crop_max_width, quality=crop_jpeg_quality
@@ -1396,20 +1391,17 @@ def detect_plates_from_candidates(
         ts = ts.replace(tzinfo=UTC)
     ocr_start = time.perf_counter()
     height, width = image_bgr.shape[:2]
+    ctx = {
+        "ts": ts,
+        "width": width,
+        "height": height,
+        "include_crops": include_crops,
+        "crop_max_width": crop_max_width,
+        "crop_jpeg_quality": crop_jpeg_quality,
+        "image_path": image_path,
+    }
     detections = [
-        _process_one_plate_candidate(
-            cand,
-            image_bgr,
-            width,
-            height,
-            ocr,
-            ts,
-            include_crops=include_crops,
-            crop_max_width=crop_max_width,
-            crop_jpeg_quality=crop_jpeg_quality,
-            image_path=image_path,
-        )
-        for cand in candidates
+        _process_one_plate_candidate(cand, image_bgr, ocr, ctx) for cand in candidates
     ]
     ocr_time = time.perf_counter() - ocr_start
     if yolo_time is not None:
@@ -1816,6 +1808,33 @@ class ChandraOcrPlateRecognizer:
         return cv2.cvtColor(processed, cv2.COLOR_BGR2RGB)
 
 
+def _create_easyocr(opts: dict[str, Any]) -> PlateOcr:
+    return EasyOcrPlateRecognizer(
+        languages=opts["languages"],
+        min_confidence=opts["min_confidence"],
+        model_storage_directory=opts.get("model_storage_directory"),
+        download_enabled=opts.get("download_enabled", True),
+        preprocess=opts["preprocess"],
+        allowlist=opts["allowlist"],
+        allowlist_chars=opts["allowlist_chars"],
+        normalize=opts["normalize"],
+    )
+
+
+def _create_common_recognizer(cls: type[Any], opts: dict[str, Any]) -> PlateOcr:
+    return cast(
+        "PlateOcr",
+        cls(
+            languages=opts["languages"],
+            min_confidence=opts["min_confidence"],
+            preprocess=opts["preprocess"],
+            allowlist=opts["allowlist"],
+            allowlist_chars=opts["allowlist_chars"],
+            normalize=opts["normalize"],
+        ),
+    )
+
+
 def create_plate_recognizer(
     *,
     engine: str,
@@ -1829,53 +1848,26 @@ def create_plate_recognizer(
     normalize: bool = False,
 ) -> PlateOcr:
     """Factory function to create a plate recognizer based on engine name."""
+    opts: dict[str, Any] = {
+        "languages": languages,
+        "min_confidence": min_confidence,
+        "model_storage_directory": model_storage_directory,
+        "download_enabled": download_enabled,
+        "preprocess": preprocess,
+        "allowlist": allowlist,
+        "allowlist_chars": allowlist_chars,
+        "normalize": normalize,
+    }
     if engine == "easyocr":
-        return EasyOcrPlateRecognizer(
-            languages=languages,
-            min_confidence=min_confidence,
-            model_storage_directory=model_storage_directory,
-            download_enabled=download_enabled,
-            preprocess=preprocess,
-            allowlist=allowlist,
-            allowlist_chars=allowlist_chars,
-            normalize=normalize,
-        )
+        return _create_easyocr(opts)
     if engine == "paddleocr":
-        return PaddleOcrPlateRecognizer(
-            languages=languages,
-            min_confidence=min_confidence,
-            preprocess=preprocess,
-            allowlist=allowlist,
-            allowlist_chars=allowlist_chars,
-            normalize=normalize,
-        )
+        return _create_common_recognizer(PaddleOcrPlateRecognizer, opts)
     if engine == "tesseract":
-        return TesseractOcrPlateRecognizer(
-            languages=languages,
-            min_confidence=min_confidence,
-            preprocess=preprocess,
-            allowlist=allowlist,
-            allowlist_chars=allowlist_chars,
-            normalize=normalize,
-        )
+        return _create_common_recognizer(TesseractOcrPlateRecognizer, opts)
     if engine == "dotsocr":
-        return DotsOcrPlateRecognizer(
-            languages=languages,
-            min_confidence=min_confidence,
-            preprocess=preprocess,
-            allowlist=allowlist,
-            allowlist_chars=allowlist_chars,
-            normalize=normalize,
-        )
+        return _create_common_recognizer(DotsOcrPlateRecognizer, opts)
     if engine == "chandra":
-        return ChandraOcrPlateRecognizer(
-            languages=languages,
-            min_confidence=min_confidence,
-            preprocess=preprocess,
-            allowlist=allowlist,
-            allowlist_chars=allowlist_chars,
-            normalize=normalize,
-        )
+        return _create_common_recognizer(ChandraOcrPlateRecognizer, opts)
     raise ValueError(
         f"Unknown OCR engine: {engine}. Choose from: easyocr, paddleocr, tesseract, dotsocr, chandra"
     )
@@ -1890,6 +1882,100 @@ def _consensus_match_score(normalized: str, other_normalized: str) -> float:
     common_chars = sum(1 for c in normalized if c in other_normalized)
     similarity = common_chars / max(len(normalized), len(other_normalized))
     return 0.5 if similarity >= 0.75 else 0.0
+
+
+def _text_length_quality(length: int) -> float:
+    """Quality contribution from text length (German plates ~6-8 chars)."""
+    if 5 <= length <= 10:
+        return 0.2
+    if 3 <= length <= 12:
+        return 0.1
+    return 0.0
+
+
+def _text_alnum_quality(text: str) -> float:
+    """Quality contribution from alphanumeric ratio."""
+    if not text:
+        return 0.0
+    alnum_count = sum(1 for c in text if c.isalnum())
+    return (alnum_count / len(text)) * 0.2
+
+
+def _text_upper_quality(text: str) -> float:
+    """Quality contribution from uppercase ratio (German plates uppercase)."""
+    alpha_count = sum(1 for c in text if c.isalpha())
+    if not alpha_count:
+        return 0.0
+    upper_count = sum(1 for c in text if c.isupper())
+    return (upper_count / alpha_count) * 0.1
+
+
+def _ensemble_run_all_engines(
+    recognizers: list[PlateOcr],
+    engines: list[str],
+    plate_bgr: np.ndarray,
+) -> list[dict[str, object]]:
+    """Run each recognizer and collect results (with error placeholders)."""
+    import logging
+
+    all_results: list[dict[str, object]] = []
+    for i, recognizer in enumerate(recognizers):
+        try:
+            text, conf, meta = recognizer.recognize(plate_bgr)
+            engine_name = engines[i]
+            all_results.append(
+                {
+                    "engine": engine_name,
+                    "text": text,
+                    "confidence": conf,
+                    "meta": meta,
+                    "raw_text": meta.get("raw_text") if meta else None,
+                    "normalized_text": meta.get("normalized_text") if meta else None,
+                }
+            )
+        except Exception as e:
+            logging.warning("OCR engine %s failed: %s", engines[i], e)
+            all_results.append(
+                {
+                    "engine": engines[i],
+                    "text": None,
+                    "confidence": None,
+                    "error": str(e),
+                }
+            )
+    return all_results
+
+
+def _ensemble_pick_best(
+    all_results: list[dict[str, object]],
+    score_result: Any,
+) -> tuple[str | None, float | None, dict[str, object]]:
+    """Score results and return (best_text, best_conf, best_meta)."""
+    scored: list[tuple[dict[str, object], float]] = []
+    for result in all_results:
+        text = cast("str | None", result.get("text"))
+        if not text:
+            continue
+        score = score_result(result, all_results)
+        scored.append((result, score))
+    if not scored:
+        return None, None, {"ensemble_results": all_results}
+    scored.sort(key=lambda x: x[1], reverse=True)
+    best_result, best_score = scored[0]
+    best_text = cast("str | None", best_result.get("text"))
+    best_conf = cast("float", best_result.get("confidence", 0.7))
+    best_meta_base = best_result.get("meta", {})
+    best_meta = {
+        **cast("dict[str, object]", best_meta_base),
+        "ensemble_engine": best_result["engine"],
+        "ensemble_score": best_score,
+        "ensemble_results": all_results,
+        "ensemble_rankings": [
+            {"engine": r["engine"], "score": s, "text": r.get("text")}
+            for r, s in scored[:3]
+        ],
+    }
+    return best_text, best_conf, best_meta
 
 
 class EnsemblePlateRecognizer:
@@ -1937,70 +2023,10 @@ class EnsemblePlateRecognizer:
         self, plate_bgr: np.ndarray
     ) -> tuple[str | None, float | None, dict[str, object]]:
         """Try all engines and return the best result using intelligent selection."""
-        all_results: list[dict[str, object]] = []
-
-        for i, recognizer in enumerate(self._recognizers):
-            try:
-                text, conf, meta = recognizer.recognize(plate_bgr)
-                engine_name = self._engines[i]
-                result_info = {
-                    "engine": engine_name,
-                    "text": text,
-                    "confidence": conf,
-                    "meta": meta,
-                    "raw_text": meta.get("raw_text") if meta else None,
-                    "normalized_text": meta.get("normalized_text") if meta else None,
-                }
-                all_results.append(result_info)
-            except Exception as e:
-                # Log but continue with other engines
-                import logging
-
-                logging.warning(f"OCR engine {self._engines[i]} failed: {e}")
-                all_results.append(
-                    {
-                        "engine": self._engines[i],
-                        "text": None,
-                        "confidence": None,
-                        "error": str(e),
-                    }
-                )
-
-        # Intelligent selection: score each result and pick the best
-        scored_results: list[tuple[dict[str, object], float]] = []
-
-        for result in all_results:
-            text = cast("str | None", result.get("text"))
-            if not text:
-                continue
-
-            score = self._score_result(result, all_results)
-            scored_results.append((result, score))
-
-        if not scored_results:
-            return None, None, {"ensemble_results": all_results}
-
-        # Sort by score (descending) and pick the best
-        scored_results.sort(key=lambda x: x[1], reverse=True)
-        best_result, best_score = scored_results[0]
-
-        best_text: str | None = cast("str | None", best_result.get("text"))
-        best_conf = cast(
-            "float", best_result.get("confidence", 0.7)
-        )  # Default confidence if missing
-        best_meta_base = best_result.get("meta", {})
-        best_meta = {
-            **cast("dict[str, object]", best_meta_base),
-            "ensemble_engine": best_result["engine"],
-            "ensemble_score": best_score,
-            "ensemble_results": all_results,
-            "ensemble_rankings": [
-                {"engine": r["engine"], "score": s, "text": r.get("text")}
-                for r, s in scored_results[:3]  # Top 3 for debugging
-            ],
-        }
-
-        return best_text, best_conf, best_meta
+        all_results = _ensemble_run_all_engines(
+            self._recognizers, self._engines, plate_bgr
+        )
+        return _ensemble_pick_best(all_results, self._score_result)
 
     def _score_result(
         self, result: dict[str, object], all_results: list[dict[str, object]]
@@ -2042,28 +2068,13 @@ class EnsemblePlateRecognizer:
         """Assess text quality based on license plate characteristics."""
         if not text:
             return 0.0
-
-        quality = 0.5  # Base score
-
-        # Prefer reasonable length (German plates are typically 6-8 chars)
-        length = len(text)
-        if 5 <= length <= 10:
-            quality += 0.2
-        elif 3 <= length <= 12:
-            quality += 0.1
-
-        # Prefer alphanumeric content (license plates are alphanumeric)
-        alnum_count = sum(1 for c in text if c.isalnum())
-        alnum_ratio = alnum_count / len(text) if text else 0.0
-        quality += alnum_ratio * 0.2
-
-        # Prefer uppercase (German plates are uppercase)
-        alpha_count = sum(1 for c in text if c.isalpha())
-        upper_count = sum(1 for c in text if c.isupper())
-        upper_ratio = (upper_count / alpha_count) if alpha_count else 0.0
-        quality += upper_ratio * 0.1
-
-        return min(1.0, quality)
+        return min(
+            1.0,
+            0.5
+            + _text_length_quality(len(text))
+            + _text_alnum_quality(text)
+            + _text_upper_quality(text),
+        )
 
     def _calculate_consensus(
         self, result: dict[str, object], all_results: list[dict[str, object]]
