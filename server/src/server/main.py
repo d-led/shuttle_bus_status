@@ -15,12 +15,11 @@ from starlette.responses import FileResponse, Response
 from starlette.routing import Route
 from starlette.staticfiles import StaticFiles
 
-from server.camera_stream import (
-    CameraStreamConfig,
-    CameraStreamController,
+from server.camera_device import (
     format_camera_device_options_for_ui,
     resolve_device,
 )
+from server.camera_stream import CameraStreamConfig, CameraStreamController
 from server.camera_view import (
     LiveViewConfiguration,
     build_camera_live_view_dependencies,

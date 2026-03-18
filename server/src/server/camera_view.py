@@ -24,10 +24,10 @@ from pyview.template.live_template import LiveRender, LiveTemplate
 from pyview.vendor import ibis
 from pyview.vendor.ibis.loaders import FileReloader
 
+from server.camera_device import format_camera_device_options_for_ui
 from server.camera_stream import (
     CameraStreamControllerProtocol,
     NullCameraStreamController,
-    format_camera_device_options_for_ui,
 )
 
 logger = logging.getLogger("uvicorn.error")
